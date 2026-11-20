@@ -3,4 +3,5 @@ pyspellchecker>=0.8
 pywebview>=5.0
 edge-tts>=7.0
 mutagen>=1.47
+send2trash>=1.8
 pytest>=8.0

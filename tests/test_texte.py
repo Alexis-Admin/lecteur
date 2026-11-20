@@ -50,6 +50,23 @@ def test_etiquettes_de_notes():
     assert etiquette_a_lire("16.3") == "Chapitre 16, verset 3"
 
 
+def test_annonces_des_notes():
+    from lecteur.modele import Bloc
+    from lecteur.prononciation import bloc_a_lire
+
+    assert bloc_a_lire(Bloc("b1", "notes", "note", "Texte.", 5, 1, ref="5.1ss")) == "Chapitre 5, versets 1 et suivants. Texte."
+    assert bloc_a_lire(Bloc("b2", "notes", "note_trad", "Nod: errer.", 4, 16, ref="4.16")).startswith("Note de traduction, chapitre 4")
+    assert bloc_a_lire(Bloc("b3", "notes", "encadre", "Points forts.")) == "Encadré. Points forts."
+
+
+def test_mots_douteux():
+    from lecteur.douteux import raison
+
+    assert raison("ouand", set()) == "mot inconnu du dictionnaire"
+    for bon in ("l’Eternel", "aujourd’hui", "cœur", "trouve-t-il", "génétiquement", "héb", "1Jn", "Kénan"):
+        assert raison(bon, set()) is None, bon
+
+
 def test_nettoyer_mot():
     assert nettoyer_mot("*11") == "Il"
     assert nettoyer_mot("II") == "Il"

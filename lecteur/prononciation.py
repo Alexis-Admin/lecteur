@@ -57,6 +57,18 @@ def a_lire(texte: str, refs_nues: bool = False) -> str:
     return t
 
 
+def bloc_a_lire(bloc, refs_nues: bool = False) -> str:
+    """Texte prononcé pour un bloc, avec son annonce (« Chapitre 5, versets 1 et suivants. », « Encadré. »)."""
+    corps = a_lire(bloc.texte, refs_nues)
+    if bloc.genre == "note" and bloc.ref:
+        return f"{etiquette_a_lire(bloc.ref)}. {corps}"
+    if bloc.genre == "note_trad":
+        return f"Note de traduction{', ' + etiquette_a_lire(bloc.ref).lower() if bloc.ref else ''}. {corps}"
+    if bloc.genre == "encadre":
+        return f"Encadré. {corps}"
+    return corps
+
+
 def etiquette_a_lire(etiquette: str) -> str:
     """« 5.1ss » -> « Chapitre 5, versets 1 et suivants »."""
     return lire_etiquette(etiquette)

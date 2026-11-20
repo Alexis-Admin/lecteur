@@ -121,8 +121,11 @@ def analyser_page(page: pymupdf.Page, numero: int) -> PageAnalysee:
     marge += [m for m in sans if m.y0 <= bible_bas and not (m.x0 <= col_x1 and m.x1 >= col_x0)]
     dans_bible = [m for m in sans if m.y0 <= bible_bas and m.x0 <= col_x1 and m.x1 >= col_x0]
     bas_page = [m for m in sans if m.y0 > bible_bas]
-    if marge:
-        pa.zones.append(_rect("ignore", marge))
+    # Zones ignorées dessinées séparément : marge de gauche, marge de droite, débris dans la colonne.
+    for groupe in ([m for m in marge if m.x1 < col_x0], [m for m in marge if m.x0 > col_x1],
+                   [m for m in marge if col_x0 <= m.x1 and m.x0 <= col_x1]):
+        if groupe:
+            pa.zones.append(_rect("ignore", groupe))
     for ligne in grouper_en_lignes(dans_bible):
         txt = texte_ligne(ligne)
         # Morceaux de lettrine mal lus (« ■4 C » à gauche d'une ligne biblique) : numéro de chapitre ou débris.
@@ -440,8 +443,12 @@ def _ref_section(abr: str, s: Section) -> str:
 
 
 def construire(doc: pymupdf.Document, pages: list[int], titre: str | None = None,
-               apprises: dict[str, str] | None = None, livre_id: str = "") -> tuple[Livre, list[PageAnalysee]]:
-    analyses = [analyser_page(doc[p - 1], p) for p in pages]
+               apprises: dict[str, str] | None = None, livre_id: str = "", progres=None) -> tuple[Livre, list[PageAnalysee]]:
+    analyses = []
+    for i, p in enumerate(pages):
+        analyses.append(analyser_page(doc[p - 1], p))
+        if progres:
+            progres(i + 1, len(pages))
     nom_livre = next((a.entete_livre for a in analyses if a.entete_livre), None)
     nom = nom_affiche(nom_livre) if nom_livre else (titre or "Livre")
     abr = abreviation_de(nom) or ""

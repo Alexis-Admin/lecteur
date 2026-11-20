@@ -36,12 +36,14 @@ def lire_pages(texte: str, maximum: int) -> list[int]:
 
 
 def importer_pdf(chemin: Path, profil: str, pages: str = "", titre: str | None = None,
-                 apprises: dict[str, str] | None = None, livre_id: str = ""):
-    """Retourne (livre, analyses par page)."""
-    doc = pymupdf.open(chemin)
-    liste = lire_pages(pages, len(doc))
-    _, fonction = PROFILS[profil]
-    livre, analyses = fonction(doc, liste, titre=titre, apprises=apprises, livre_id=livre_id)
+                 apprises: dict[str, str] | None = None, livre_id: str = "", progres=None):
+    """Retourne (livre, analyses par page). Le PDF est seulement lu, jamais modifié."""
+    with pymupdf.open(chemin) as doc:
+        liste = lire_pages(pages, len(doc))
+        if not liste:
+            raise ValueError("Aucune page à importer : vérifie les numéros de pages.")
+        _, fonction = PROFILS[profil]
+        livre, analyses = fonction(doc, liste, titre=titre, apprises=apprises, livre_id=livre_id, progres=progres)
     livre.source = Path(chemin).name
     return livre, analyses
 

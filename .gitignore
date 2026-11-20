@@ -13,6 +13,7 @@
 !*.mjs
 !*.toml
 !*.bat
+!outils/serveur_dev.py
 !*.ps1
 !*.sh
 !.gitignore

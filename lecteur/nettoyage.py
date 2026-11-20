@@ -90,7 +90,7 @@ def corriger_texte(texte: str, journal: list | None = None, apprises: dict[str, 
     # Mots coupés restés au milieu d'une ligne : « commence- ments »
     def r_coupe(m: re.Match) -> str:
         colle = m.group(1) + m.group(2)
-        if (connu(colle) or not connu(m.group(2))) and not connu(m.group(1) + "-" + m.group(2)):
+        if connu(colle) or not connu(m.group(2)):
             if journal is not None:
                 journal.append((m.group(0), colle))
             return colle

@@ -67,7 +67,7 @@ def _lignes_de_page(page: pymupdf.Page, numero: int, nb_colonnes: int) -> tuple[
 
 
 def construire(doc: pymupdf.Document, pages: list[int], nb_colonnes: int, nom_profil: str, titre: str | None = None,
-               apprises: dict[str, str] | None = None, livre_id: str = ""):
+               apprises: dict[str, str] | None = None, livre_id: str = "", progres=None):
     livre = Livre(livre_id, titre or "Livre", nom_profil, "", pages)
     journal: list[tuple[str, str, int]] = []
     analyses = []
@@ -91,7 +91,9 @@ def construire(doc: pymupdf.Document, pages: list[int], nb_colonnes: int, nom_pr
                 paragraphes.append(("paragraphe", t, page_courant))
         courant = []
 
-    for p in pages:
+    for i, p in enumerate(pages):
+        if progres:
+            progres(i + 1, len(pages))
         lignes, zones, _ = _lignes_de_page(doc[p - 1], p, nb_colonnes)
         analyses.append({"numero": p, "zones": zones, "largeur": doc[p - 1].rect.width, "hauteur": doc[p - 1].rect.height})
         for l in lignes:
