@@ -76,6 +76,21 @@ def test_arret_propre(tmp_path: Path):
 
 
 @pytest.mark.skipif(not os.environ.get("LECTEUR_RESEAU"), reason="Internet : seulement avec LECTEUR_RESEAU=1")
+def test_voix_hors_ligne_piper(tmp_path: Path, monkeypatch):
+    import json
+
+    from lecteur.voix import MoteurPiper
+
+    monkeypatch.setenv("LECTEUR_DONNEES", str(tmp_path / "donnees"))
+    livre = _livre()
+    asyncio.run(generer_livre(tmp_path, livre, "piper:fr_FR-siwis-medium", MoteurPiper(), en_parallele=1))
+    a = audio_du_bloc(tmp_path, livre, livre.sections[0].blocs[1], "piper:fr_FR-siwis-medium")
+    m = json.loads(a.minutage.read_text(encoding="utf-8"))
+    assert m["duree"] > 1 and len(m["mots"]) >= 6
+    assert m["mots"][-1]["f"] <= m["duree"] + 0.2
+
+
+@pytest.mark.skipif(not os.environ.get("LECTEUR_RESEAU"), reason="Internet : seulement avec LECTEUR_RESEAU=1")
 def test_vraie_voix_sylvie(tmp_path: Path):
     from lecteur.voix import MoteurEdge
 
