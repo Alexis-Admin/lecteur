@@ -115,26 +115,34 @@ async function ouvrirLivre(id, vue = "lecture") {
   $("#b-usb").disabled = false;
   $("#b-usb").title = "Copier les MP3 sur une clé USB";
   $("#modes").hidden = !aDesNotes(l);
+  // Reprise : la section de la dernière écoute d'abord, sinon la dernière section regardée.
+  const pos = (etat.reglages.positions || {})[id];
   const memo = (etat.reglages.sections || {})[id];
-  etat.section = l.sections.find((s) => s.id === memo) || l.sections[0] || null;
+  etat.section = l.sections.find((s) => pos && s.id === pos.section) || l.sections.find((s) => s.id === memo) || l.sections[0] || null;
+  if (pos && aDesNotes(l) && pos.mode) etat.mode = pos.mode;
+  etat.suivi.durees = null;
   dessinerSections();
   chargerLivres();
   if (vue === "apercu") ouvrirApercu(); else afficherLecture();
   await majAudio();
   if (vue !== "apercu" && sectionPrete()) chargerAudioSection(false);
+  chargerDurees();
 }
 
 function dessinerSections() {
   const l = etat.livre;
   $("#lab-sections").hidden = !l.sections.length;
+  const ecoutees = new Set((etat.reglages.ecoutees || {})[l.id] || []);
+  const coche = '<svg viewBox="0 0 24 24" aria-label="Écoutée" style="width:14px;height:14px;stroke-width:2.5"><path d="M5 12l5 5 9-10"/></svg>';
   $("#sections").innerHTML = l.sections.map((s, i) => `
-    <button class="sec ${etat.section && s.id === etat.section.id ? "actif" : ""}" data-id="${s.id}" title="${echap((s.ref ? s.ref + " · " : "") + s.titre)}">
-      <span class="n mono">${String(i + 1).padStart(2, "0")}</span>
+    <button class="sec ${etat.section && s.id === etat.section.id ? "actif" : ""} ${ecoutees.has(s.id) ? "fait" : ""}" data-id="${s.id}" title="${echap((s.ref ? s.ref + " · " : "") + s.titre)}${ecoutees.has(s.id) ? " (écoutée)" : ""}">
+      <span class="n mono">${ecoutees.has(s.id) ? coche : String(i + 1).padStart(2, "0")}</span>
       <span class="t">${echap(s.ref ? s.ref + " · " + s.titre : s.titre)}</span></button>`).join("");
   $$("#sections .sec").forEach((b) => (b.onclick = () => choisirSection(b.dataset.id)));
 }
 
 function choisirSection(id) {
+  sauverPosition();
   etat.section = etat.livre.sections.find((s) => s.id === id);
   const memo = { ...(etat.reglages.sections || {}) };
   memo[etat.livre.id] = id;
@@ -159,23 +167,28 @@ function afficherLecture() {
   $$("#modes button").forEach((b) => b.classList.toggle("on", b.dataset.mode === mode));
   $("#fil").innerHTML = `${echap(l.titre)} › <b>${echap(s.ref ? s.ref + " · " : "")}${echap(s.titre)}</b>`;
   const idx = l.sections.indexOf(s);
+  // Chaque bloc lu à voix haute est un <span class="lu-bloc" data-id> : le surlignage s'y accroche.
+  // (Pas « .bt » : ce nom sert déjà à l'en-tête des boîtes.)
+  const bt = (b, cls = "") => `<span class="lu-bloc ${cls}" data-id="${b.id}">${echap(b.texte)}</span>`;
   let html = "";
-  const parties = s.blocs.filter((b) => b.genre === "partie");
-  parties.forEach((p) => (html += `<p class="partie">${echap(p.texte)}</p>`));
-  html += `<h2>${echap(s.titre)}</h2><p class="ref">${echap(s.ref || "")}${s.ref ? " · " : ""}section ${idx + 1} sur ${l.sections.length}</p>`;
+  s.blocs.filter((b) => b.genre === "partie").forEach((p) => (html += `<p class="partie">${bt(p)}</p>`));
+  const titre = s.blocs.find((b) => b.genre === "titre");
+  html += `<h2>${titre ? bt(titre) : echap(s.titre)}</h2><p class="ref">${echap(s.ref || "")}${s.ref ? " · " : ""}section ${idx + 1} sur ${l.sections.length}</p>`;
   for (const b of listeDeLecture(s, mode)) {
     if (b.genre === "titre" || b.genre === "partie") continue;
     if (b.piste === "notes") {
       const tag = b.genre === "encadre" ? "Encadré" : (b.ref || "Note");
-      html += `<div class="note"><span class="tag">${echap(tag)}</span><span>${echap(b.texte)}</span></div>`;
+      html += `<div class="note"><span class="tag">${echap(tag)}</span>${bt(b)}</div>`;
     } else if (b.genre === "verset") {
-      html += `<p><span class="v">${b.v}</span>${echap(b.texte)}</p>`;
+      html += `<p><span class="v">${b.v}</span>${bt(b)}</p>`;
     } else {
-      html += `<p>${echap(b.texte)}</p>`;
+      html += `<p>${bt(b)}</p>`;
     }
   }
   $("#page-lecture").innerHTML = html;
   $("#zone-lecture").scrollTop = 0;
+  etat.suivi.courant = null;
+  etat.suivi.mot = -1;
   if (etat.audio.e && !etat.audio.e.en_cours && sectionPrete()) chargerAudioSection(false);
   else dessinerBarreAudio();
 }
@@ -647,11 +660,21 @@ async function chargerAudioSection(jouer = false) {
     const r = await api.audio_section(l.id, s.id, mode);
     if (!r.url) { if (r.erreur) toast(r.erreur); return false; }
     etat.audio.chargee = cle;
+    preparerMinutage(r.minutage);
     a.src = r.url;
     a.playbackRate = etat.reglages.vitesse || 1;
+    // Reprise : la position retenue pour ce livre et cette section.
+    const pos = (etat.reglages.positions || {})[l.id];
+    if (pos && pos.section === s.id && pos.mode === mode && pos.t > 1) {
+      await new Promise((ok) => { if (a.readyState >= 1) ok(); else a.addEventListener("loadedmetadata", ok, { once: true }); });
+      a.currentTime = Math.min(pos.t, (a.duration || pos.t) - 0.5);
+    }
+    majMediaSession();
   }
   if (jouer) { try { await a.play(); } catch (e) { /* lecture refusée */ } }
   dessinerLecteur();
+  majSurlignage(true);
+  majProgression();
   return true;
 }
 
@@ -677,9 +700,12 @@ function brancherAudio() {
     $("#a-reste").textContent = "−" + fmt((a.duration || 0) - a.currentTime);
     $("#a-barre").style.width = a.duration ? `${(a.currentTime / a.duration) * 100}%` : "0%";
   });
-  a.addEventListener("play", () => $("#a-play") && ($("#a-play").innerHTML = ICONES.pause));
-  a.addEventListener("pause", () => $("#a-play") && ($("#a-play").innerHTML = ICONES.play));
-  a.addEventListener("ended", () => changerSection(1, true));
+  a.addEventListener("play", () => { $("#a-play") && ($("#a-play").innerHTML = ICONES.pause); boucleSuivi(); });
+  a.addEventListener("pause", () => { $("#a-play") && ($("#a-play").innerHTML = ICONES.play); sauverPosition(); });
+  a.addEventListener("seeked", () => { majSurlignage(true); sauverPosition(); });
+  a.addEventListener("ended", () => { marquerEcoutee(etat.section.id); changerSection(1, true); });
+  window.addEventListener("beforeunload", sauverPosition);
+  brancherSuivi();
   $("#b-voix").onclick = (ev) => { ev.stopPropagation(); basculerPopVoix(); };
   document.addEventListener("click", (ev) => { if (!$("#pop-voix").hidden && !$("#pop-voix").contains(ev.target)) $("#pop-voix").hidden = true; });
 }
@@ -711,6 +737,182 @@ async function basculerPopVoix() {
     $("#audio").removeAttribute("src");
     majAudio();
   }));
+}
+
+// ---------- lecteur (phase 3) : surlignage, défilement, clic, reprise ----------
+etat.suivi = { mots: [], blocs: {}, courant: null, mot: -1, manuelJusqua: 0, dernierSauve: 0, durees: null };
+
+function preparerMinutage(m) {
+  const mots = [], blocs = {};
+  for (const b of m.blocs) {
+    blocs[b.bloc] = { debut: b.debut, fin: b.fin };
+    for (const w of b.mots) if (w.a >= 0) mots.push({ t: w.d, f: w.f, bloc: b.bloc, a: w.a, b: w.b });
+  }
+  mots.sort((x, y) => x.t - y.t);
+  etat.suivi.mots = mots;
+  etat.suivi.blocs = blocs;
+  etat.suivi.mot = -1;
+}
+
+function motA(t) {
+  const m = etat.suivi.mots;
+  let lo = 0, hi = m.length - 1, res = -1;
+  // + 0,1 s : un mot sur le point de commencer est déjà allumé (après un clic ou un saut).
+  while (lo <= hi) { const mid = (lo + hi) >> 1; if (m[mid].t <= t + 0.1) { res = mid; lo = mid + 1; } else hi = mid - 1; }
+  return res;
+}
+
+// Limites de la phrase qui contient la position p (fin de phrase : . ! ? … ; suivis d'un espace).
+function phraseAutour(texte, p) {
+  let debut = 0, fin = texte.length;
+  const re = /[.!?…;](?:\s*[»"”)])?\s+/g;
+  let m;
+  while ((m = re.exec(texte))) {
+    const f = m.index + m[0].length;
+    if (f <= p) debut = f; else { fin = f; break; }
+  }
+  return [debut, fin];
+}
+
+function texteBloc(id) {
+  for (const s of etat.livre.sections) for (const b of s.blocs) if (b.id === id) return b.texte;
+  return "";
+}
+
+function majSurlignage(force = false) {
+  const a = $("#audio"), s = etat.suivi;
+  if (!s.mots.length || $("#vue-lecture").hidden) return;
+  const i = motA(a.currentTime);
+  if (i === s.mot && !force) return;
+  s.mot = i;
+  const t = a.currentTime;
+  const m = i >= 0 && t <= s.mots[i].f + 1.2 ? s.mots[i] : null;  // dans un silence long : rien de surligné
+  const blocCourant = m ? m.bloc : null;
+  // Blocs déjà lus en gris ; le bloc courant est redessiné avec sa phrase et son mot.
+  $$("#page-lecture .lu-bloc").forEach((el) => {
+    const id = el.dataset.id, info = s.blocs[id];
+    if (id === blocCourant) return;
+    if (el.dataset.deco) { el.textContent = texteBloc(id); delete el.dataset.deco; }
+    el.classList.toggle("lue", !!info && info.fin <= t);
+  });
+  if (!m) { s.courant = null; return; }
+  const el = $(`#page-lecture .lu-bloc[data-id="${m.bloc}"]`);
+  if (!el) return;
+  const txt = texteBloc(m.bloc);
+  const [p0, p1] = phraseAutour(txt, m.a);
+  el.classList.remove("lue");
+  el.dataset.deco = "1";
+  el.innerHTML = `<span class="ph lue">${echap(txt.slice(0, p0))}</span><span class="ph cours">${echap(txt.slice(p0, m.a))}<mark>${echap(txt.slice(m.a, m.b))}</mark>${echap(txt.slice(m.b, p1))}</span>${echap(txt.slice(p1))}`;
+  s.courant = m.bloc;
+  // Défilement : garder le mot vers le milieu, sauf si l'utilisateur fait défiler lui-même.
+  const mk = el.querySelector("mark"), zone = $("#zone-lecture");
+  if (mk && Date.now() > s.manuelJusqua) {
+    const rz = zone.getBoundingClientRect(), rm = mk.getBoundingClientRect();
+    if (rm.top < rz.top + rz.height * 0.2 || rm.bottom > rz.top + rz.height * 0.7)
+      zone.scrollTo({ top: zone.scrollTop + (rm.top - rz.top) - rz.height * 0.38, behavior: "smooth" });
+  }
+  if (!a.paused && Date.now() - s.dernierSauve > 5000) sauverPosition();
+}
+
+function boucleSuivi() {
+  const a = $("#audio");
+  majSurlignage();
+  if ($("#a-t")) {
+    $("#a-t").textContent = fmt(a.currentTime);
+  }
+  majProgression(false);
+  if (!a.paused) requestAnimationFrame(boucleSuivi);
+}
+
+function brancherSuivi() {
+  const zone = $("#zone-lecture");
+  const manuel = () => (etat.suivi.manuelJusqua = Date.now() + 5000);
+  zone.addEventListener("wheel", manuel, { passive: true });
+  zone.addEventListener("touchmove", manuel, { passive: true });
+  zone.addEventListener("mousedown", (e) => { if (e.target === zone) manuel(); });
+  // Clic sur une phrase : la lecture part du début de cette phrase.
+  $("#page-lecture").addEventListener("click", async (e) => {
+    const el = e.target.closest(".lu-bloc");
+    if (!el || (window.getSelection() && !window.getSelection().isCollapsed)) return;
+    if (!sectionPrete()) { toast("Crée d'abord l'audio pour cliquer sur une phrase."); return; }
+    let offset = 0;
+    const r = document.caretRangeFromPoint ? document.caretRangeFromPoint(e.clientX, e.clientY) : null;
+    if (r && el.contains(r.startContainer)) {
+      const w = document.createTreeWalker(el, NodeFilter.SHOW_TEXT);
+      let n;
+      while ((n = w.nextNode())) { if (n === r.startContainer) { offset += r.startOffset; break; } offset += n.length; }
+    }
+    const [p0] = phraseAutour(texteBloc(el.dataset.id), offset);
+    if (!(await chargerAudioSection(false))) return;
+    const mots = etat.suivi.mots.filter((m) => m.bloc === el.dataset.id);
+    const cible = mots.find((m) => m.a >= p0) || mots[0];
+    const a = $("#audio");
+    a.currentTime = cible ? Math.max(0, cible.t - 0.05) : (etat.suivi.blocs[el.dataset.id] || { debut: 0 }).debut;
+    etat.suivi.manuelJusqua = 0;
+    try { await a.play(); } catch (err) { /* refusé */ }
+  });
+}
+
+function sauverPosition() {
+  const a = $("#audio"), l = etat.livre, s = etat.section;
+  if (!l || !s || !etat.audio.chargee || !etat.audio.chargee.startsWith(l.id + "|" + s.id + "|")) return;
+  const positions = { ...(etat.reglages.positions || {}) };
+  positions[l.id] = { section: s.id, mode: aDesNotes(l) ? etat.mode : "texte", t: Math.round(a.currentTime * 10) / 10, quand: Date.now() };
+  etat.suivi.dernierSauve = Date.now();
+  sauverReglages({ positions });
+  if (a.duration && a.currentTime / a.duration > 0.97) marquerEcoutee(s.id);
+}
+
+function marquerEcoutee(id) {
+  const l = etat.livre, tout = { ...(etat.reglages.ecoutees || {}) };
+  const liste = new Set(tout[l.id] || []);
+  if (liste.has(id)) return;
+  liste.add(id);
+  tout[l.id] = [...liste];
+  sauverReglages({ ecoutees: tout });
+  dessinerSections();
+}
+
+async function chargerDurees() {
+  const l = etat.livre;
+  etat.suivi.durees = await api.durees_sections(l.id, aDesNotes(l) ? etat.mode : "texte");
+  majProgression();
+}
+
+// Barre de la carte du livre : où j'en suis dans le livre, et le temps qui reste.
+function majProgression(complet = true) {
+  const l = etat.livre, d = etat.suivi.durees, a = $("#audio");
+  if (!l || !etat.section) return;
+  const i = l.sections.indexOf(etat.section);
+  let pc, reste = null;
+  if (d && d.every((x) => x)) {
+    const total = d.reduce((x, y) => x + y, 0);
+    const avant = d.slice(0, i).reduce((x, y) => x + y, 0) + (a.currentTime || 0);
+    pc = total ? avant / total : 0;
+    reste = (total - avant) / (a.playbackRate || 1);  // temps réel d'écoute à la vitesse choisie
+  } else pc = (i + (a.duration ? a.currentTime / a.duration : 0)) / l.sections.length;
+  $("#livre-progres").style.width = `${Math.max(0.5, pc * 100)}%`;
+  if (complet || Date.now() - (etat.suivi.texteProgres || 0) > 2000) {
+    etat.suivi.texteProgres = Date.now();
+    const pctxt = pc < 0.1 && pc > 0 ? (Math.floor(pc * 1000) / 10).toLocaleString("fr-CA") : Math.floor(pc * 100);
+    $("#livre-info").textContent = reste !== null ? `${pctxt} % · ${duree(reste)} restantes` : `${pctxt} % · section ${i + 1} sur ${l.sections.length}`;
+  }
+}
+
+function majMediaSession() {
+  if (!("mediaSession" in navigator) || !etat.section) return;
+  const s = etat.section;
+  navigator.mediaSession.metadata = new MediaMetadata({ title: (s.ref ? s.ref + " · " : "") + s.titre, album: etat.livre.titre,
+    artist: "Lecteur · " + ($("#voix-nom").textContent || "") });
+}
+if ("mediaSession" in navigator) {
+  const ms = navigator.mediaSession;
+  ms.setActionHandler("play", () => basculerLecture());
+  ms.setActionHandler("pause", () => $("#audio").pause());
+  ms.setActionHandler("seekbackward", () => sauter(-15));
+  ms.setActionHandler("seekforward", () => sauter(15));
+  ms.setActionHandler("previoustrack", () => changerSection(-1, true));
+  ms.setActionHandler("nexttrack", () => changerSection(1, true));
 }
 
 // ---------- export clé USB (phase 2.4) ----------
@@ -861,7 +1063,12 @@ function brancher() {
     dessinerTexte();
   };
   $$("#pistes button").forEach((b) => (b.onclick = () => choisirPiste(b.dataset.piste)));
-  $$("#modes button").forEach((b) => (b.onclick = () => { etat.mode = b.dataset.mode; sauverReglages({ mode: etat.mode }); afficherLecture(); }));
+  $$("#modes button").forEach((b) => (b.onclick = () => {
+    const jouait = !$("#audio").paused;
+    etat.mode = b.dataset.mode; sauverReglages({ mode: etat.mode });
+    afficherLecture(); chargerDurees();
+    if (jouait && sectionPrete()) chargerAudioSection(true);
+  }));
 
   document.addEventListener("keydown", (e) => {
     const edition = e.target.isContentEditable || e.target.tagName === "INPUT";

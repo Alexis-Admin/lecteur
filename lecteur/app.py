@@ -343,6 +343,11 @@ class Api:
         return {"url": serveur_audio.adresse(r["mp3"]), "duree": r["duree"],
                 "minutage": json.loads(r["minutage"].read_text(encoding="utf-8"))}
 
+    def durees_sections(self, livre_id: str, mode: str) -> list[float | None]:
+        """Durée de chaque section (None si son audio n'est pas encore créé) : progression et temps restant."""
+        livre = self._livre(livre_id)
+        return [duree_section(self._dossier(livre_id), livre, s, mode, self._voix()) for s in livre.sections]
+
     # --- export clé USB (phase 2.4) -------------------------------------------
     def cles_usb(self) -> list[dict]:
         return export_usb.cles_usb()

@@ -108,6 +108,14 @@ body[data-theme="nuit"] .page { font-size: 20px; line-height: 1.75; }
 .page .ref { margin: 2px 0 18px; font-family: Inter, sans-serif; font-size: 13px; color: var(--texte2); }
 .page .partie { font-family: Inter, sans-serif; font-size: 12px; letter-spacing: .14em; text-transform: uppercase; color: var(--num); font-weight: 600; margin: 0 0 4px; }
 .page p { margin: 0 0 12px; }
+.page .lu-bloc { cursor: pointer; border-radius: 4px; transition: background .15s, color .3s; }
+.page .lu-bloc:hover { background: var(--phrase-survol); }
+.page .lu-bloc.lue, .page .ph.lue { color: var(--lue); }
+.page .ph.cours { background: var(--phrase); border-radius: 4px; }
+body[data-theme="nuit"] .page .ph.cours { color: #FFFFFF; }
+.page mark { background: var(--surligneur); color: #14110A; border-radius: 3px; padding: 0 2px; }
+.sec.fait .n { color: var(--ok); }
+.sec.actif.fait .n { color: var(--sur-accent); }
 .v { font-family: "JetBrains Mono", monospace; font-size: 11px; color: var(--num); margin-right: 3px; vertical-align: super; }
 .note { display: flex; gap: 10px; margin: 2px 0 16px; padding: 10px 14px; border-radius: 12px; background: var(--note); border: 1px solid var(--note-filet);
   font-family: Inter, sans-serif; font-size: 14px; line-height: 1.55; color: var(--note-t); }
