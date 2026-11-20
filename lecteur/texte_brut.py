@@ -64,6 +64,9 @@ def _paragraphes(texte: str) -> list[tuple[str, list[str]]]:
 
 
 def _nettoyer_markdown(t: str) -> str:
+    t = re.sub(r"<sup>.*?</sup>", "", t)  # appels de note « [92] »
+    t = re.sub(r"\\?\[\d{1,3}\\?\]", "", t)
+    t = re.sub(r"</?[a-z][^>]*>", "", t)  # autres balises restées
     t = re.sub(r"!\[[^\]]*\]\([^)]*\)", "", t)  # images
     t = re.sub(r"\[([^\]]+)\]\([^)]*\)", r"\1", t)  # liens -> texte
     t = re.sub(r"(\*\*|__)(.+?)\1", r"\2", t)
@@ -128,6 +131,9 @@ def lire_page_web(url: str) -> tuple[str, str]:
         raise ValueError("Je n'ai pas trouvé d'article lisible sur cette page.")
     meta = trafilatura.extract_metadata(html)
     titre = (meta.title if meta and meta.title else "") or url
+    # « Livre de la Genèse — Wikipédia » -> « Livre de la Genèse »
+    site = (meta.sitename if meta and meta.sitename else "") or ""
+    titre = re.sub(rf"\s+[—–|·-]\s+({re.escape(site)}|Wikipédia|Wikipedia)\s*$", "", titre.strip(), flags=re.I) if titre else titre
     return titre.strip(), texte
 
 

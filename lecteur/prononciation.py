@@ -6,6 +6,7 @@ longue (« par exemple », « Genèse, chapitre 4, verset 7 »).
 from __future__ import annotations
 
 import re
+import unicodedata
 
 from .references import lire_etiquette, lire_references
 
@@ -44,11 +45,15 @@ _RE_ABR = [(re.compile(m), r) for m, r in ABREVIATIONS]
 
 def a_lire(texte: str, refs_nues: bool = False) -> str:
     """Texte affiché -> texte prononcé."""
-    t = texte
+    t = unicodedata.normalize("NFC", texte)  # « é » en un seul caractère
     for motif, remplacement in _RE_ABR:
         t = motif.sub(remplacement, t)
     t = re.sub(r"(?<!\d)([1-8])°", lambda m: _ORDINAUX[m.group(1)], t)
     t = lire_references(t, refs_nues=refs_nues)
+    # Mots en grec, hébreu, syriaque, arabe, cyrillique : la voix française ne sait pas les lire.
+    t = re.sub(r"[Ͱ-Ͽἀ-῿֐-׿؀-ۿ܀-ݏЀ-ӿ][\ẁ-ͯ֐-׿܀-ݏ]*", "", t)
+    t = re.sub(r"\(\s*[/;,:]?\s*\)", "", t)  # parenthèses vidées
+    t = re.sub(r"\s+\)", ")", t)
     # Tirets de liste : après une fin de phrase on les enlève, ailleurs ils deviennent une pause.
     t = re.sub(r"([.!?:;»])\s*[-–]\s", r"\1 ", t)
     t = re.sub(r"^\s*[-–]\s*", "", t)

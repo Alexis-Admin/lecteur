@@ -105,7 +105,8 @@ async function ouvrirLivre(id, vue = "lecture") {
   const nomProfil = (etat.infos.profils.find((p) => p.id === l.profil) || {}).nom
     || { texte: "Texte collé", web: "Page web", images: "Captures" }[l.meta.type] || "";
   $("#livre-sous").textContent = `${nomProfil}${aDesNotes(l) ? " · texte + notes" : ""}`;
-  $("#livre-info").textContent = `${l.pages.length ? l.pages.length + (l.meta.type === "images" ? " images · " : " pages · ") : ""}${l.sections.length} sections`;
+  const pl = (n, mot) => `${n} ${mot}${n > 1 ? "s" : ""}`;
+  $("#livre-info").textContent = `${l.pages.length ? pl(l.pages.length, l.meta.type === "images" ? "image" : "page") + " · " : ""}${pl(l.sections.length, "section")}`;
   $("#livre-progres").style.width = "0%";
   $("#b-apercu").disabled = false;
   $("#modes").hidden = !aDesNotes(l);
@@ -214,6 +215,7 @@ async function allerPage(n) {
   $("#scan").innerHTML = `<div class="chargement">Chargement de la page…</div>`;
   const r = await api.page(l.id, n, 900);
   if (etat.ap.page !== n) return;
+  $(".c-scan .leg").hidden = !!r.sans_page;
   if (r.sans_page) {
     const src = /^https?:/.test(r.source) ? `<a href="${echap(r.source)}" target="_blank" rel="noopener">${echap(r.source)}</a>` : echap(r.source);
     $("#scan").innerHTML = `<div class="source-info"><b>${l.meta.type === "web" ? "Page web" : "Texte collé"}</b>${src}

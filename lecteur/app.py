@@ -169,7 +169,8 @@ class Api:
 
     def douteux(self, livre_id: str) -> list[dict]:
         ign = set(bibliotheque.corrections().get("ignores", []))
-        return douteux.analyser(self._livre(livre_id), ign)
+        sans_ocr = bibliotheque.meta(livre_id).get("type") == "web"
+        return douteux.analyser(self._livre(livre_id), ign, sans_ocr=sans_ocr)
 
     def page(self, livre_id: str, numero: int, largeur: int = 900) -> dict:
         """Image de la page scannée et zones détectées (pour l'aperçu)."""

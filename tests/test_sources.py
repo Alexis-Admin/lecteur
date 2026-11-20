@@ -30,12 +30,21 @@ def test_texte_vide_refuse():
 
 
 def test_markdown_de_page_web():
-    md = "# Titre\n\nUn **paragraphe** avec un [lien](http://x).\n\n## Notes et références\n\n1. source\n\n### Sous-note\n\nencore\n\n## Suite\n\nTexte final."
+    md = "# Titre\n\nUn **paragraphe** avec un [lien](http://x)<sup>\\[92\\]</sup>.\n\n## Notes et références\n\n1. source\n\n### Sous-note\n\nencore\n\n## Suite\n\nTexte final."
     propre = _retirer_sections_inutiles(md)
     assert "source" not in propre and "Sous-note" not in propre and "Texte final" in propre
     livre = livre_depuis_texte(md, "Page", markdown=True)
     assert [s.titre for s in livre.sections] == ["Titre", "Suite"]
     assert livre.sections[0].blocs[1].texte == "Un paragraphe avec un lien."
+
+
+def test_alphabets_etrangers():
+    from lecteur.douteux import raison
+    from lecteur.prononciation import a_lire
+
+    assert raison("Βιβλίον", set()) is None
+    assert a_lire("Le Livre de la Genèse (hébreu : סֵפֶר) est le premier livre.") == "Le Livre de la Genèse (hébreu :) est le premier livre."
+    assert a_lire("été") == "été"  # accents décomposés recomposés, pas supprimés
 
 
 def test_erreurs_ocr_des_captures():

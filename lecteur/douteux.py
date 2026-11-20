@@ -8,8 +8,9 @@ from .dictionnaire import ABREVIATIONS, connu, sans_elision, suggestions
 from .modele import Livre
 
 _RE_MOT = re.compile(r"[\wÀ-ÿœŒæ’'\-]+")
-_RE_REF = re.compile(r"^\d{1,3}(\.\d{1,3})?[a-c]?$")
+_RE_REF = re.compile(r"^\d{1,3}(\.\d{1,3})?[a-c]?(-\d{1,3}[a-c]?)?$")  # 16.3, 4b-9a
 _RE_LIVRE_NUM = re.compile(r"^[123][A-ZÉ][a-zé]{0,3}$")  # 1Jn, 2R, 1Co
+_RE_AUTRE_ALPHABET = re.compile(r"[Ͱ-Ͽἀ-῿֐-׿؀-ۿ܀-ݏЀ-ӿ]|[̀-ͯ]")
 _RE_DEBUT_PHRASE = re.compile(r"(^|[.!?:«—–]\s*|\(\s*)$")
 
 
@@ -18,6 +19,8 @@ def raison(mot: str, ignores: set[str], debut_phrase: bool = False, noms: set[st
     m = mot.strip("’'-")
     if not m or _RE_REF.match(m) or m.isdigit() or _RE_LIVRE_NUM.match(m):
         return None
+    if _RE_AUTRE_ALPHABET.search(m):
+        return None  # grec, hébreu, syriaque… : pas une erreur de lecture
     if m.lower() in ignores:
         return None
     if re.search(r"\d", m) and re.search(r"[A-Za-zÀ-ÿ]", m):
@@ -54,8 +57,12 @@ def _noms_propres(livre: Livre) -> set[str]:
     return noms
 
 
-def analyser(livre: Livre, ignores: set[str], max_mots: int = 400) -> list[dict]:
-    """Liste des mots douteux du livre, regroupés par mot (un mot corrigé = corrigé partout)."""
+def analyser(livre: Livre, ignores: set[str], max_mots: int = 400, sans_ocr: bool = False) -> list[dict]:
+    """Liste des mots douteux du livre, regroupés par mot (un mot corrigé = corrigé partout).
+
+    sans_ocr : texte qui ne vient pas d'une reconnaissance de texte (page web) → seulement les vrais
+    accidents (chiffres et lettres mélangés, majuscule au milieu), pas les mots absents du dictionnaire.
+    """
     noms = _noms_propres(livre)
     trouves: dict[str, dict] = {}
     occurrences: dict[str, list] = defaultdict(list)
@@ -64,7 +71,11 @@ def analyser(livre: Livre, ignores: set[str], max_mots: int = 400) -> list[dict]
             for m in _RE_MOT.finditer(b.texte):
                 mot = m.group(0).rstrip("-")
                 debut = bool(_RE_DEBUT_PHRASE.search(b.texte[: m.start()]))
-                if mot in trouves or (r := raison(mot, ignores, debut, noms)):
+                if mot not in trouves:
+                    r = raison(mot, ignores, debut, noms)
+                    if not r or (sans_ocr and "inconnu" in r):
+                        continue
+                if mot in trouves or r:
                     if mot not in trouves:
                         trouves[mot] = {"mot": mot, "raison": r}
                     if len(occurrences[mot]) < 5:

@@ -5,6 +5,7 @@ Chaque correction est notée dans un journal (avant, après) pour l'aperçu.
 from __future__ import annotations
 
 import re
+import unicodedata
 
 from .dictionnaire import connu
 from .references import corriger_references
@@ -85,7 +86,7 @@ _RE_COUPE = re.compile(r"\b([\wÀ-ÿ]{2,})- ([a-zà-ÿ][\wÀ-ÿ]*)")
 
 def corriger_texte(texte: str, journal: list | None = None, apprises: dict[str, str] | None = None) -> str:
     """Corrections au niveau du texte entier (après assemblage)."""
-    t = texte.replace(TRAIT_CONDITIONNEL, "")
+    t = unicodedata.normalize("NFC", texte).replace(TRAIT_CONDITIONNEL, "")
 
     # Mots coupés restés au milieu d'une ligne : « commence- ments »
     def r_coupe(m: re.Match) -> str:
