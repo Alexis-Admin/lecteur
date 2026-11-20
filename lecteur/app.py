@@ -3,6 +3,7 @@ from __future__ import annotations
 
 import base64
 import json
+import shutil
 import threading
 import time
 from pathlib import Path
@@ -13,8 +14,10 @@ import webview
 from . import __version__, bibliotheque, douteux
 from .importer import PROFILS, importer_pdf, lire_pages
 from .modele import Livre
+from .ocr_image import langues_disponibles
 from .profils import bible_etude, deux_colonnes, simple
 from .prononciation import a_lire, bloc_a_lire, etiquette_a_lire
+from .texte_brut import lire_page_web, livre_depuis_images, livre_depuis_texte
 
 UI = Path(__file__).resolve().parent.parent / "ui" / "index.html"
 
@@ -88,11 +91,75 @@ class Api:
             livre.titre = titre
         with pymupdf.open(chemin) as doc:
             nb = len(lire_pages(pages, len(doc)))
-        meta = {"titre": livre.titre, "profil": profil, "chemin_source": str(chemin), "nb_pages": nb,
+        meta = {"type": "pdf", "titre": livre.titre, "profil": profil, "chemin_source": str(chemin), "nb_pages": nb,
                 "pages": pages, "nb_sections": len(livre.sections), "importe_le": time.strftime("%Y-%m-%d %H:%M")}
         bibliotheque.enregistrer(livre, meta)
         self._livres[livre_id] = livre
         return {"id": livre_id}
+
+    # --- captures d'écran, texte collé, page web ---------------------------
+    def ocr_disponible(self) -> bool:
+        return any(l.lower().startswith("fr") for l in langues_disponibles())
+
+    def choisir_images(self) -> list[dict]:
+        r = self._fenetre.create_file_dialog(webview.OPEN_DIALOG, allow_multiple=True,
+                                             file_types=("Images (*.png;*.jpg;*.jpeg;*.bmp;*.gif;*.tif;*.tiff;*.webp)",))
+        return [{"chemin": c, "nom": Path(c).name} for c in sorted(r or [])]
+
+    def importer_images(self, sources: list[dict], profil: str, titre: str) -> dict:
+        """sources : [{"chemin": …}] ou [{"donnees": "data:image/png;base64,…", "nom": …}] (capture collée)."""
+        if not sources:
+            raise ValueError("Ajoute au moins une image.")
+        titre = titre.strip() or "Captures du " + time.strftime("%Y-%m-%d")
+        livre_id = bibliotheque.nouvel_id(titre)
+        dossier = bibliotheque.chemin_livre(livre_id).parent / "images"
+        dossier.mkdir(parents=True, exist_ok=True)
+        chemins: list[Path] = []
+        for i, s in enumerate(sources, 1):
+            if s.get("donnees"):
+                entete, _, b64 = s["donnees"].partition(",")
+                ext = ".jpg" if "jpeg" in entete else ".png"
+                cible = dossier / f"{i:03d}{ext}"
+                cible.write_bytes(base64.b64decode(b64))
+            else:
+                src = Path(s["chemin"])
+                cible = dossier / f"{i:03d}{src.suffix.lower()}"
+                shutil.copy2(src, cible)  # copie : l'original n'est jamais touché
+            chemins.append(cible)
+        debut = time.time()
+
+        def progres(i: int, n: int) -> None:
+            self._js(f"window.progresImport && progresImport({i}, {n}, {time.time() - debut:.1f})")
+
+        nb_col = 2 if profil == deux_colonnes.NOM else 1
+        livre, analyses = livre_depuis_images(chemins, nb_col, titre, bibliotheque.corrections().get("apprises"),
+                                              livre_id, progres)
+        livre.source = f"{len(chemins)} capture(s)"
+        bibliotheque.ecrire_json(dossier.parent / "zones.json", {str(a["numero"]): a for a in analyses})
+        return self._enregistrer_nouveau(livre, {"type": "images", "profil": profil, "nb_pages": len(chemins),
+                                                 "images": [c.name for c in chemins]})
+
+    def importer_texte(self, texte: str, titre: str) -> dict:
+        titre = titre.strip() or (texte.strip().splitlines() or ["Texte"])[0][:60]
+        livre_id = bibliotheque.nouvel_id(titre)
+        livre = livre_depuis_texte(texte, titre, bibliotheque.corrections().get("apprises"), livre_id)
+        livre.source = "texte collé"
+        return self._enregistrer_nouveau(livre, {"type": "texte", "profil": "texte", "nb_pages": 0})
+
+    def importer_url(self, url: str, titre: str) -> dict:
+        titre_page, texte = lire_page_web(url)
+        titre = titre.strip() or titre_page
+        livre_id = bibliotheque.nouvel_id(titre)
+        livre = livre_depuis_texte(texte, titre, bibliotheque.corrections().get("apprises"), livre_id,
+                                   profil="web", markdown=True)
+        livre.source = url
+        return self._enregistrer_nouveau(livre, {"type": "web", "profil": "web", "url": url, "nb_pages": 0})
+
+    def _enregistrer_nouveau(self, livre: Livre, meta: dict) -> dict:
+        meta.update({"titre": livre.titre, "nb_sections": len(livre.sections), "importe_le": time.strftime("%Y-%m-%d %H:%M")})
+        bibliotheque.enregistrer(livre, meta)
+        self._livres[livre.id] = livre
+        return {"id": livre.id}
 
     def livre(self, livre_id: str) -> dict:
         livre = self._livre(livre_id)
@@ -107,6 +174,18 @@ class Api:
     def page(self, livre_id: str, numero: int, largeur: int = 900) -> dict:
         """Image de la page scannée et zones détectées (pour l'aperçu)."""
         m = bibliotheque.meta(livre_id)
+        if m.get("type") == "images":
+            dossier = bibliotheque.chemin_livre(livre_id).parent
+            nom = m.get("images", [])[numero - 1]
+            fichier = dossier / "images" / nom
+            if not fichier.exists():
+                return {"erreur": "Image introuvable."}
+            ext = fichier.suffix.lower().lstrip(".").replace("jpg", "jpeg")
+            image = f"data:image/{ext};base64," + base64.b64encode(fichier.read_bytes()).decode()
+            z = bibliotheque.lire_json(dossier / "zones.json", {}).get(str(numero), {})
+            return {"image": image, "largeur": z.get("largeur", 1), "hauteur": z.get("hauteur", 1), "zones": z.get("zones", [])}
+        if m.get("type") in ("texte", "web"):
+            return {"sans_page": True, "source": m.get("url") or "Texte collé"}
         chemin = m.get("chemin_source", "")
         if not chemin or not Path(chemin).exists():
             return {"erreur": "Le PDF d'origine a été déplacé ou renommé."}

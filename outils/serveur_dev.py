@@ -33,6 +33,10 @@ class ApiDev(Api):
         chemin = os.environ.get("LECTEUR_DEV_PDF")
         return self.infos_pdf(chemin) if chemin else None
 
+    def choisir_images(self):
+        chemins = [c for c in os.environ.get("LECTEUR_DEV_IMAGES", "").split(";") if c]
+        return [{"chemin": c, "nom": Path(c).name} for c in chemins]
+
 
 API = ApiDev()
 

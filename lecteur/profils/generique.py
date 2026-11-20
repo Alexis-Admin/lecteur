@@ -2,19 +2,24 @@
 
 Ignore en-têtes, pieds de page et numéros de page. Repère les titres (plus gros ou en gras)
 pour découper en sections ; sans titre, coupe environ toutes les 1 500 mots.
+Sert aussi aux captures d'écran (mots venant de l'OCR de Windows).
 """
 from __future__ import annotations
 
 import re
 import statistics
+from typing import Callable
 
 import pymupdf
 
 from ..modele import Bloc, Livre, Section
 from ..nettoyage import assembler, corriger_texte, nettoyer_mot
-from ..pdf_mots import Mot, grouper_en_lignes, mots_de_page, taille_corps, texte_ligne
+from ..pdf_mots import Mot, colle, grouper_en_lignes, mots_de_page, taille_corps, texte_ligne
 
 MOTS_PAR_SECTION = 1500
+
+# source(numero) -> (mots, largeur, hauteur, couper_les_bords)
+Source = Callable[[int], tuple[list[Mot], float, float, bool]]
 
 
 def _colonnes(mots: list[Mot], largeur: float, nb: int) -> list[list[Mot]]:
@@ -23,7 +28,7 @@ def _colonnes(mots: list[Mot], largeur: float, nb: int) -> list[list[Mot]]:
     # Gouttière : bande verticale la moins couverte au milieu de la page.
     couverture = [0] * int(largeur + 1)
     for m in mots:
-        for x in range(int(m.x0), min(int(m.x1) + 1, len(couverture))):
+        for x in range(max(0, int(m.x0)), min(int(m.x1) + 1, len(couverture))):
             couverture[x] += 1
     a, b = int(largeur * 0.35), int(largeur * 0.65)
     milieu = min(range(a, b), key=lambda x: (couverture[x], abs(x - largeur / 2)))
@@ -31,10 +36,10 @@ def _colonnes(mots: list[Mot], largeur: float, nb: int) -> list[list[Mot]]:
             [m for m in mots if not (m.x1 <= milieu + 2 or (m.x0 + m.x1) / 2 < milieu)]]
 
 
-def _lignes_de_page(page: pymupdf.Page, numero: int, nb_colonnes: int) -> tuple[list[dict], list[dict], float]:
-    W, H = page.rect.width, page.rect.height
-    mots = [m for m in mots_de_page(page, numero) if m.texte.strip()]
-    haut, bas = H * 0.06, H * 0.95
+def lignes_de_mots(mots: list[Mot], W: float, H: float, numero: int, nb_colonnes: int,
+                   couper_bords: bool = True) -> tuple[list[dict], list[dict], float]:
+    mots = [m for m in mots if m.texte.strip()]
+    haut, bas = (H * 0.06, H * 0.95) if couper_bords else (-1, H + 1)
     ignores = [m for m in mots if m.y1 <= haut or m.y0 >= bas]
     mots = [m for m in mots if m.y1 > haut and m.y0 < bas]
     corps = taille_corps(mots)
@@ -56,7 +61,8 @@ def _lignes_de_page(page: pymupdf.Page, numero: int, nb_colonnes: int) -> tuple[
             if re.fullmatch(r"[\divxlcIVXLC\-–— ]{1,8}", txt):  # numéro de page égaré
                 continue
             taille = statistics.median(m.taille for m in ligne)
-            titre = (taille >= 1.18 * corps or all(m.gras for m in ligne)) and len(ligne) <= 16
+            titre = (taille >= 1.18 * corps or all(m.gras for m in ligne)) and len(ligne) <= 16 \
+                and not re.search(r"[.,;]$", txt)
             alinea = ligne[0].x0 - x_gauche > 1.2 * corps
             ecart = precedente is not None and ligne[0].y0 - precedente["y1"] > 0.9 * corps
             courte = precedente is not None and precedente["x1"] < x_droite - 4 * corps and re.search(r"[.!?»:]$", precedente["texte"])
@@ -66,49 +72,12 @@ def _lignes_de_page(page: pymupdf.Page, numero: int, nb_colonnes: int) -> tuple[
     return sortie, zones, corps
 
 
-def construire(doc: pymupdf.Document, pages: list[int], nb_colonnes: int, nom_profil: str, titre: str | None = None,
-               apprises: dict[str, str] | None = None, livre_id: str = "", progres=None):
-    livre = Livre(livre_id, titre or "Livre", nom_profil, "", pages)
-    journal: list[tuple[str, str, int]] = []
-    analyses = []
-    paragraphes: list[tuple[str, str, int]] = []  # (genre, texte, page)
-    courant: list[str] = []
-    page_courant = pages[0] if pages else 1
+def _lignes_de_page(page: pymupdf.Page, numero: int, nb_colonnes: int) -> tuple[list[dict], list[dict], float]:
+    return lignes_de_mots(mots_de_page(page, numero), page.rect.width, page.rect.height, numero, nb_colonnes)
 
-    def nettoyer_ligne(ligne: dict) -> str:
-        j: list = []
-        mots = [nettoyer_mot(m.texte, j) for m in ligne["mots"]]
-        journal.extend((a, b, ligne["page"]) for a, b in j)
-        return " ".join(m for m in mots if m)
 
-    def fermer():
-        nonlocal courant
-        if courant:
-            j: list = []
-            t = corriger_texte(assembler(courant, j), j, apprises)
-            journal.extend((a, b, page_courant) for a, b in j)
-            if t:
-                paragraphes.append(("paragraphe", t, page_courant))
-        courant = []
-
-    for i, p in enumerate(pages):
-        if progres:
-            progres(i + 1, len(pages))
-        lignes, zones, _ = _lignes_de_page(doc[p - 1], p, nb_colonnes)
-        analyses.append({"numero": p, "zones": zones, "largeur": doc[p - 1].rect.width, "hauteur": doc[p - 1].rect.height})
-        for l in lignes:
-            if l["titre"]:
-                fermer()
-                paragraphes.append(("titre", nettoyer_ligne(l), p))
-                continue
-            if l["nouveau"]:
-                fermer()
-            if not courant:
-                page_courant = p
-            courant.append(nettoyer_ligne(l))
-    fermer()
-
-    # Titres consécutifs fusionnés ; sections.
+def assembler_sections(livre: Livre, paragraphes: list[tuple[str, str, int | None]]) -> None:
+    """(genre, texte, page) -> sections du livre. Titres consécutifs fusionnés ; longues parties coupées."""
     n = 0
 
     def nid() -> str:
@@ -142,5 +111,64 @@ def construire(doc: pymupdf.Document, pages: list[int], nb_colonnes: int, nom_pr
             mots_section = 0
         section.blocs.append(Bloc(nid(), "texte", "paragraphe", texte, page=page))
         mots_section += nb
+
+
+def construire_depuis(source: Source, pages: list[int], nb_colonnes: int, nom_profil: str, titre: str | None = None,
+                      apprises: dict[str, str] | None = None, livre_id: str = "", progres=None):
+    livre = Livre(livre_id, titre or "Livre", nom_profil, "", pages)
+    journal: list[tuple[str, str, int]] = []
+    analyses = []
+    paragraphes: list[tuple[str, str, int]] = []
+    courant: list[str] = []
+    page_courant = pages[0] if pages else 1
+
+    def nettoyer_ligne(ligne: dict) -> str:
+        j: list = []
+        texte, precedent = "", None
+        for m in ligne["mots"]:
+            propre = nettoyer_mot(m.texte, j)
+            if propre:
+                texte += propre if (not texte or (precedent and colle(precedent, m))) else " " + propre
+                precedent = m
+        journal.extend((a, b, ligne["page"]) for a, b in j)
+        return texte
+
+    def fermer():
+        nonlocal courant
+        if courant:
+            j: list = []
+            t = corriger_texte(assembler(courant, j), j, apprises)
+            journal.extend((a, b, page_courant) for a, b in j)
+            if t:
+                paragraphes.append(("paragraphe", t, page_courant))
+        courant = []
+
+    for i, p in enumerate(pages):
+        if progres:
+            progres(i + 1, len(pages))
+        mots, W, H, couper = source(p)
+        lignes, zones, _ = lignes_de_mots(mots, W, H, p, nb_colonnes, couper)
+        analyses.append({"numero": p, "zones": zones, "largeur": W, "hauteur": H})
+        for l in lignes:
+            if l["titre"]:
+                fermer()
+                paragraphes.append(("titre", nettoyer_ligne(l), p))
+                continue
+            if l["nouveau"]:
+                fermer()
+            if not courant:
+                page_courant = p
+            courant.append(nettoyer_ligne(l))
+    fermer()
+    assembler_sections(livre, paragraphes)
     livre.corrections = [{"avant": a, "apres": b, "page": p} for a, b, p in journal if a != b]
     return livre, analyses
+
+
+def construire(doc: pymupdf.Document, pages: list[int], nb_colonnes: int, nom_profil: str, titre: str | None = None,
+               apprises: dict[str, str] | None = None, livre_id: str = "", progres=None):
+    def source(p: int):
+        page = doc[p - 1]
+        return mots_de_page(page, p), page.rect.width, page.rect.height, True
+
+    return construire_depuis(source, pages, nb_colonnes, nom_profil, titre, apprises, livre_id, progres)

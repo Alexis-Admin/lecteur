@@ -198,6 +198,18 @@ body[data-theme="nuit"] .tout-bon { background: #12261A; color: #7FD4A0; }
 .profil b { font-size: 13px; } .profil span { font-size: 12px; color: var(--texte2); }
 .profil .mini { height: 44px; border-radius: 6px; background: var(--fond); position: relative; overflow: hidden; }
 .mini i { position: absolute; border-radius: 3px; }
+.onglets-imp { width: max-content; }
+.panneau { display: flex; flex-direction: column; gap: 8px; }
+.vignettes { display: flex; flex-wrap: wrap; gap: 8px; }
+.vignette { position: relative; width: 96px; height: 72px; border-radius: 8px; border: 1px solid var(--filet); overflow: hidden; background: var(--fond); }
+.vignette img { width: 100%; height: 100%; object-fit: cover; }
+.vignette .num { position: absolute; left: 4px; top: 4px; font-family: "JetBrains Mono", monospace; font-size: 11px; background: var(--prim); color: var(--prim-t); border-radius: 999px; padding: 0 6px; }
+.vignette .x2 { position: absolute; right: 3px; top: 3px; width: 20px; height: 20px; border-radius: 999px; border: none; background: rgba(0,0,0,.55); color: #fff; font-size: 12px; line-height: 20px; padding: 0; }
+.vignette .nom { position: absolute; left: 0; right: 0; bottom: 0; font-size: 10.5px; background: rgba(0,0,0,.5); color: #fff; padding: 1px 4px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+#imp-texte { width: 100%; border-radius: 10px; border: 1px solid var(--filet); background: var(--carte); color: var(--texte); padding: 10px 12px; font: 14px/1.5 Inter, "Segoe UI", sans-serif; resize: vertical; }
+.champ-seul { display: flex; flex-direction: column; gap: 4px; font-size: 12.5px; color: var(--texte2); }
+.champ-seul input { height: 34px; border-radius: 10px; border: 1px solid var(--filet); background: var(--carte); color: var(--texte); padding: 0 10px; font: inherit; }
+.source-info { padding: 16px; display: flex; flex-direction: column; gap: 6px; font-size: 13px; color: var(--texte2); word-break: break-all; }
 .champs { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; }
 .champs label { display: flex; flex-direction: column; gap: 4px; font-size: 12.5px; color: var(--texte2); }
 .champs input { height: 34px; border-radius: 10px; border: 1px solid var(--filet); background: var(--carte); color: var(--texte); padding: 0 10px; font: inherit; }

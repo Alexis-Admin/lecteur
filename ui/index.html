@@ -139,17 +139,42 @@
       <button class="x" id="imp-fermer" aria-label="Fermer" title="Fermer (Échap)"><svg viewBox="0 0 24 24"><path d="M6 6l12 12M18 6L6 18"/></svg></button>
     </div>
     <div class="bc">
-      <button class="fichier" id="imp-fichier">
-        <span class="ic"><svg viewBox="0 0 24 24"><path d="M14 3H6a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V9z"/><path d="M14 3v6h6"/></svg></span>
-        <span class="f-txt"><b id="imp-nom">Choisir un PDF…</b><span id="imp-details" class="petit">PDF scanné (CZUR) ou PDF normal</span></span>
-      </button>
-      <div>
+      <div class="seg onglets-imp" role="tablist" aria-label="Source" id="imp-onglets">
+        <button data-type="pdf" role="tab">PDF</button><button data-type="images" role="tab">Captures</button><button data-type="texte" role="tab">Texte</button><button data-type="web" role="tab">Page web</button>
+      </div>
+
+      <div class="panneau" data-panneau="pdf">
+        <button class="fichier" id="imp-fichier">
+          <span class="ic"><svg viewBox="0 0 24 24"><path d="M14 3H6a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V9z"/><path d="M14 3v6h6"/></svg></span>
+          <span class="f-txt"><b id="imp-nom">Choisir un PDF…</b><span id="imp-details" class="petit">PDF scanné (CZUR) ou PDF normal</span></span>
+        </button>
+      </div>
+
+      <div class="panneau" data-panneau="images">
+        <button class="fichier" id="imp-images">
+          <span class="ic"><svg viewBox="0 0 24 24"><rect x="3" y="4" width="18" height="16" rx="2"/><circle cx="9" cy="10" r="2"/><path d="M21 16l-5-5-8 8"/></svg></span>
+          <span class="f-txt"><b>Choisir des images…</b><span class="petit">ou colle une capture avec <b>Ctrl+V</b> (plusieurs = une page chacune, dans l'ordre)</span></span>
+        </button>
+        <div class="vignettes" id="imp-vignettes"></div>
+        <p class="erreur" id="imp-ocr-absent" hidden>La reconnaissance de texte en français n'est pas installée dans Windows : Paramètres › Heure et langue › Langue › Français › Options.</p>
+      </div>
+
+      <div class="panneau" data-panneau="texte">
+        <textarea id="imp-texte" rows="9" placeholder="Colle ton texte ici (Ctrl+V). Une ligne vide sépare les paragraphes ; une ligne courte seule devient un titre."></textarea>
+      </div>
+
+      <div class="panneau" data-panneau="web">
+        <label class="champ-seul">Adresse de la page<input id="imp-url" type="url" placeholder="ex. https://fr.wikipedia.org/wiki/Livre_de_la_Genèse" inputmode="url"></label>
+        <p class="petit">Seul l'article est gardé (pas les menus, publicités, références ni liens).</p>
+      </div>
+
+      <div id="imp-bloc-profils">
         <span class="lab-c">Mise en page</span>
         <div class="profils" id="imp-profils"></div>
       </div>
       <div class="champs">
         <label>Titre<input id="imp-titre-livre" type="text" placeholder="ex. Genèse"></label>
-        <label>Pages<input id="imp-pages" type="text" placeholder="toutes, ou 15-17, 29" inputmode="numeric"></label>
+        <label id="imp-bloc-pages">Pages<input id="imp-pages" type="text" placeholder="toutes, ou 15-17, 29" inputmode="numeric"></label>
       </div>
       <div id="imp-progres" hidden>
         <div class="ligne-progres"><span id="imp-etape">Lecture des pages…</span><span class="mono" id="imp-compte"></span></div>

@@ -9,7 +9,7 @@ let api = null;
 const etat = {
   infos: null, reglages: {}, livres: [], livre: null, section: null, mode: "mixte",
   ap: { page: null, piste: "texte", lu: false, douteux: [], autoTout: false, ouverts: new Set() },
-  imp: { fichier: null, profil: "bible_etude", enCours: false },
+  imp: { type: "pdf", fichier: null, images: [], profil: "bible_etude", enCours: false },
 };
 
 // ---------- utilitaires ----------
@@ -67,7 +67,7 @@ async function chargerLivres() {
   ul.innerHTML = etat.livres.map((l) => `
     <button class="sec ${etat.livre && etat.livre.id === l.id ? "actif" : ""}" data-id="${l.id}" title="${echap(l.titre)} — clic droit : options">
       <span class="n"><svg viewBox="0 0 24 24"><path d="M4 19.5A2.5 2.5 0 0 1 6.5 17H20V3H6.5A2.5 2.5 0 0 0 4 5.5z"/></svg></span>
-      <span class="t">${echap(l.titre)}</span><span class="d mono">${l.pages} p.</span></button>`).join("");
+      <span class="t">${echap(l.titre)}</span><span class="d mono">${{ texte: "texte", web: "web" }[l.type] || l.pages + " p."}</span></button>`).join("");
   $$("#livres .sec").forEach((b) => {
     b.onclick = () => ouvrirLivre(b.dataset.id);
     b.oncontextmenu = (e) => { e.preventDefault(); menuLivre(b); };
@@ -102,9 +102,10 @@ async function ouvrirLivre(id, vue = "lecture") {
   const l = etat.livre;
   $("#carte-livre").hidden = false;
   $("#livre-titre").textContent = l.titre;
-  const nomProfil = (etat.infos.profils.find((p) => p.id === l.profil) || {}).nom || "";
+  const nomProfil = (etat.infos.profils.find((p) => p.id === l.profil) || {}).nom
+    || { texte: "Texte collé", web: "Page web", images: "Captures" }[l.meta.type] || "";
   $("#livre-sous").textContent = `${nomProfil}${aDesNotes(l) ? " · texte + notes" : ""}`;
-  $("#livre-info").textContent = `${l.pages.length} pages · ${l.sections.length} sections`;
+  $("#livre-info").textContent = `${l.pages.length ? l.pages.length + (l.meta.type === "images" ? " images · " : " pages · ") : ""}${l.sections.length} sections`;
   $("#livre-progres").style.width = "0%";
   $("#b-apercu").disabled = false;
   $("#modes").hidden = !aDesNotes(l);
@@ -175,7 +176,11 @@ async function ouvrirApercu() {
   const l = etat.livre;
   $("#ap-titre").textContent = l.titre;
   const memo = (etat.reglages.pages_apercu || {})[l.id];
-  etat.ap.page = l.pages.includes(memo) ? memo : (etat.section && (etat.section.blocs.find((b) => b.page) || {}).page) || l.pages[0];
+  const liste = pagesApercu();
+  etat.ap.page = liste.includes(memo) ? memo
+    : sansPages() ? l.sections.indexOf(etat.section) + 1 || 1
+    : (etat.section && (etat.section.blocs.find((b) => b.page) || {}).page) || liste[0];
+  $(".c-scan h3").textContent = sansPages() ? "Source" : etat.livre.meta.type === "images" ? "Capture" : "Page scannée";
   $$("#pistes button").forEach((b) => b.classList.toggle("on", b.dataset.piste === etat.ap.piste));
   $("#pistes").hidden = !aDesNotes(l);
   dessinerAuto();
@@ -189,13 +194,19 @@ async function chargerDouteux() {
   dessinerDouteux();
 }
 
+// Livre sans pages (texte collé, page web) : l'aperçu avance section par section.
+function sansPages() { return !etat.livre.pages.length; }
+function pagesApercu() { return sansPages() ? etat.livre.sections.map((_, i) => i + 1) : etat.livre.pages; }
+
 async function allerPage(n) {
   const l = etat.livre;
+  const liste = pagesApercu();
   etat.ap.page = n;
-  const i = l.pages.indexOf(n);
-  $("#p-num").textContent = `p. ${n} · ${i + 1}/${l.pages.length}`;
+  const i = liste.indexOf(n);
+  $("#p-num").textContent = sansPages() ? `section ${i + 1}/${liste.length}`
+    : `${l.meta.type === "images" ? "image" : "p."} ${n} · ${i + 1}/${liste.length}`;
   $("#p-prec").disabled = i <= 0;
-  $("#p-suiv").disabled = i >= l.pages.length - 1;
+  $("#p-suiv").disabled = i >= liste.length - 1;
   const memo = { ...(etat.reglages.pages_apercu || {}) };
   memo[l.id] = n;
   sauverReglages({ pages_apercu: memo });
@@ -203,6 +214,13 @@ async function allerPage(n) {
   $("#scan").innerHTML = `<div class="chargement">Chargement de la page…</div>`;
   const r = await api.page(l.id, n, 900);
   if (etat.ap.page !== n) return;
+  if (r.sans_page) {
+    const src = /^https?:/.test(r.source) ? `<a href="${echap(r.source)}" target="_blank" rel="noopener">${echap(r.source)}</a>` : echap(r.source);
+    $("#scan").innerHTML = `<div class="source-info"><b>${l.meta.type === "web" ? "Page web" : "Texte collé"}</b>${src}
+      <span>${l.sections.length} sections · ${l.sections.reduce((t, s) => t + s.blocs.reduce((u, b) => u + b.texte.split(/\s+/).length, 0), 0).toLocaleString("fr-CA")} mots</span>
+      <span>Pas de page scannée : les flèches passent d'une section à l'autre.</span></div>`;
+    return;
+  }
   if (r.erreur) { $("#scan").innerHTML = `<div class="chargement">${echap(r.erreur)}</div>`; return; }
   const zones = r.zones.map((z) => {
     const g = ["bible", "notes", "encadre", "ignore"].includes(z.genre) ? z.genre : "ignore";
@@ -248,7 +266,9 @@ function decorer(texte, page) {
 
 async function dessinerTexte() {
   const l = etat.livre, n = etat.ap.page, piste = aDesNotes(l) ? etat.ap.piste : "texte";
-  const liste = l.sections.flatMap((s) => s.blocs.filter((b) => b.page === n && b.piste === piste));
+  const liste = sansPages()
+    ? (l.sections[n - 1] || { blocs: [] }).blocs.filter((b) => b.piste === piste)
+    : l.sections.flatMap((s) => s.blocs.filter((b) => b.page === n && b.piste === piste));
   const zone = $("#ap-texte");
   if (!liste.length) {
     zone.innerHTML = `<p class="petit">Rien sur cette page pour la piste « ${piste === "notes" ? "Notes" : "Texte"} ».</p>`;
@@ -294,15 +314,16 @@ function dessinerDouteux() {
     const ex = d.exemples[0] || {};
     const sug = d.suggestions.map((s, k) => `<button class="pil ${k === 0 ? "ok" : ""}" data-i="${i}" data-rempl="${echap(s)}">${echap(s)}</button>`).join("");
     return `<div class="item" data-i="${i}">
-      <span class="ctx" data-page="${ex.page || ""}" data-piste="${ex.piste || ""}" title="Aller à la page ${ex.page || ""}">${echap(ex.avant)}<b>${echap(d.mot)}</b>${echap(ex.apres)}</span>
-      <span class="meta">${d.nb} fois · p. ${ex.page || "?"} · ${echap(d.raison)}</span>
+      <span class="ctx" data-page="${ex.page || ""}" data-section="${ex.section || ""}" data-piste="${ex.piste || ""}" title="Aller à cet endroit">${echap(ex.avant)}<b>${echap(d.mot)}</b>${echap(ex.apres)}</span>
+      <span class="meta">${d.nb} fois${ex.page ? " · p. " + ex.page : ""} · ${echap(d.raison)}</span>
       <div class="acts">${sug}<button class="pil" data-corriger="${i}">Corriger…</button><button class="pil" data-garder="${i}" title="Le mot est bon : ne plus le signaler">Garder</button></div>
     </div>`;
   }).join("") + (liste.length > 80 ? `<p class="petit">… et ${liste.length - 80} autres. Corrige ceux-ci d'abord.</p>` : "");
 
   $$("#liste-douteux .ctx").forEach((el) => (el.onclick = () => {
     if (el.dataset.piste && aDesNotes(etat.livre)) choisirPiste(el.dataset.piste, false);
-    if (el.dataset.page) allerPage(Number(el.dataset.page));
+    if (sansPages()) allerPage(etat.livre.sections.findIndex((s) => s.id === el.dataset.section) + 1 || 1);
+    else if (el.dataset.page) allerPage(Number(el.dataset.page));
   }));
   $$("#liste-douteux [data-rempl]").forEach((el) => (el.onclick = () => remplacer(liste[el.dataset.i].mot, el.dataset.rempl)));
   $$("#liste-douteux [data-garder]").forEach((el) => (el.onclick = async () => {
@@ -361,25 +382,101 @@ const PROFILS_AIDE = {
   simple: { aide: "Une colonne, page après page", mini: '<i style="left:14%;top:12%;width:72%;height:78%;background:#0A84FF33;border:1px solid #0A84FF"></i>' },
 };
 
-function ouvrirImport() {
+function ouvrirImport(type = etat.reglages.type_import || "pdf", contenu = null) {
   if (etat.imp.enCours) return;
   etat.imp.fichier = null;
+  etat.imp.images = [];
   $("#imp-nom").textContent = "Choisir un PDF…";
   $("#imp-details").textContent = "PDF scanné (CZUR) ou PDF normal";
   $("#imp-titre-livre").value = "";
   $("#imp-pages").value = "";
+  $("#imp-texte").value = "";
+  $("#imp-url").value = "";
   $("#imp-erreur").hidden = true;
   $("#imp-progres").hidden = true;
   $("#imp-resume").textContent = "";
-  $("#imp-go").disabled = true;
-  dessinerProfils();
   $("#import").hidden = false;
-  $("#imp-fichier").focus();
+  choisirOnglet(type);
+  if (contenu && contenu.image) ajouterImage(contenu.image);
+  if (contenu && contenu.texte) { $("#imp-texte").value = contenu.texte; majImport(); }
 }
 function fermerImport() { if (!etat.imp.enCours) $("#import").hidden = true; }
 
+function choisirOnglet(type) {
+  etat.imp.type = type;
+  sauverReglages({ type_import: type });
+  $$("#imp-onglets button").forEach((b) => b.classList.toggle("on", b.dataset.type === type));
+  $$(".panneau").forEach((p) => (p.hidden = p.dataset.panneau !== type));
+  $("#imp-bloc-profils").hidden = !["pdf", "images"].includes(type);
+  $("#imp-bloc-pages").hidden = type !== "pdf";
+  if (type === "images" && !["simple", "deux_colonnes"].includes(etat.imp.profil)) etat.imp.profil = "simple";
+  if (type === "images") api.ocr_disponible().then((ok) => ($("#imp-ocr-absent").hidden = ok));
+  dessinerProfils();
+  majImport();
+  const premierChamp = { pdf: "#imp-fichier", images: "#imp-images", texte: "#imp-texte", web: "#imp-url" }[type];
+  if (premierChamp) $(premierChamp).focus();
+}
+
+function majImport() {
+  const t = etat.imp.type;
+  const pret = t === "pdf" ? !!etat.imp.fichier
+    : t === "images" ? etat.imp.images.length > 0
+    : t === "texte" ? $("#imp-texte").value.trim().length > 0
+    : /\S+\.\S+/.test($("#imp-url").value.trim());
+  $("#imp-go").disabled = !pret || etat.imp.enCours;
+  $("#imp-resume").textContent = !pret ? ""
+    : t === "images" ? `${etat.imp.images.length} image${etat.imp.images.length > 1 ? "s" : ""} · une page chacune`
+    : t === "texte" ? `${$("#imp-texte").value.trim().split(/\s+/).length.toLocaleString("fr-CA")} mots`
+    : "Prêt à importer.";
+}
+
+function ajouterImage(source) {
+  etat.imp.images.push(source);
+  dessinerVignettes();
+  majImport();
+}
+
+function dessinerVignettes() {
+  $("#imp-vignettes").innerHTML = etat.imp.images.map((im, i) => `
+    <div class="vignette" title="${echap(im.nom)}">
+      ${im.donnees ? `<img src="${im.donnees}" alt="">` : ""}
+      <span class="num">${i + 1}</span><button class="x2" data-i="${i}" aria-label="Retirer">×</button>
+      <span class="nom">${echap(im.nom)}</span></div>`).join("");
+  $$("#imp-vignettes .x2").forEach((b) => (b.onclick = () => { etat.imp.images.splice(Number(b.dataset.i), 1); dessinerVignettes(); majImport(); }));
+}
+
+async function choisirImages() {
+  const liste = await api.choisir_images();
+  liste.forEach((im) => etat.imp.images.push(im));
+  dessinerVignettes();
+  majImport();
+  if (liste.length && !$("#imp-titre-livre").value) $("#imp-titre-livre").value = liste[0].nom.replace(/\.[^.]+$/, "");
+}
+
+function lireCollage(e) {
+  // Ctrl+V : une image collée devient une capture ; un texte collé hors d'un champ ouvre l'onglet Texte.
+  const items = [...(e.clipboardData?.items || [])];
+  const image = items.find((i) => i.type.startsWith("image/"));
+  const dansChamp = e.target.isContentEditable || ["INPUT", "TEXTAREA"].includes(e.target.tagName);
+  if (image) {
+    e.preventDefault();
+    const lecteur = new FileReader();
+    lecteur.onload = () => {
+      const src = { donnees: lecteur.result, nom: `Capture ${new Date().toLocaleTimeString("fr-CA")}` };
+      if ($("#import").hidden) ouvrirImport("images", { image: src });
+      else { if (etat.imp.type !== "images") choisirOnglet("images"); ajouterImage(src); }
+    };
+    lecteur.readAsDataURL(image.getAsFile());
+  } else if (!dansChamp && $("#import").hidden) {
+    const texte = e.clipboardData?.getData("text/plain") || "";
+    if (/^https?:\/\/\S+$/.test(texte.trim())) { e.preventDefault(); ouvrirImport("web"); $("#imp-url").value = texte.trim(); majImport(); }
+    else if (texte.trim().split(/\s+/).length > 20) { e.preventDefault(); ouvrirImport("texte", { texte }); }
+  }
+}
+
 function dessinerProfils() {
-  $("#imp-profils").innerHTML = etat.infos.profils.map((p) => `
+  const permis = etat.imp.type === "images" ? ["simple", "deux_colonnes"] : etat.infos.profils.map((p) => p.id);
+  $("#imp-profils").innerHTML = etat.infos.profils.filter((p) => permis.includes(p.id)).map((p) => `
     <button class="profil ${p.id === etat.imp.profil ? "on" : ""}" data-id="${p.id}">
       <span class="mini">${PROFILS_AIDE[p.id].mini}</span><b>${echap(p.nom)}</b><span>${PROFILS_AIDE[p.id].aide}</span></button>`).join("");
   $$("#imp-profils .profil").forEach((b) => (b.onclick = () => { etat.imp.profil = b.dataset.id; dessinerProfils(); }));
@@ -396,8 +493,7 @@ async function choisirFichier() {
   if (/bible|gen[eè]se|exode|psaume|segond/.test(nom)) etat.imp.profil = "bible_etude";
   else if (/commentaire/.test(nom)) etat.imp.profil = "deux_colonnes";
   dessinerProfils();
-  $("#imp-go").disabled = false;
-  $("#imp-resume").textContent = "Prêt à importer.";
+  majImport();
 }
 
 window.progresImport = (i, n, sec) => {
@@ -410,17 +506,22 @@ window.progresImport = (i, n, sec) => {
 };
 
 async function lancerImport() {
-  const f = etat.imp.fichier;
-  if (!f) return;
+  const t = etat.imp.type, titre = $("#imp-titre-livre").value.trim();
+  if ($("#imp-go").disabled) return;
   etat.imp.enCours = true;
   $("#imp-go").disabled = true;
   $("#imp-annuler").disabled = true;
   $("#imp-erreur").hidden = true;
   $("#imp-progres").hidden = false;
   $("#imp-barre").style.width = "1%";
-  $("#imp-etape").textContent = "Lecture des pages…";
+  $("#imp-compte").textContent = "";
+  $("#imp-etape").textContent = { pdf: "Lecture des pages…", images: "Reconnaissance du texte des images…",
+    texte: "Nettoyage du texte…", web: "Téléchargement de la page…" }[t];
   try {
-    const r = await api.importer(f.chemin, etat.imp.profil, $("#imp-pages").value, $("#imp-titre-livre").value.trim());
+    const r = t === "pdf" ? await api.importer(etat.imp.fichier.chemin, etat.imp.profil, $("#imp-pages").value, titre)
+      : t === "images" ? await api.importer_images(etat.imp.images, etat.imp.profil, titre)
+      : t === "texte" ? await api.importer_texte($("#imp-texte").value, titre)
+      : await api.importer_url($("#imp-url").value.trim(), titre);
     etat.imp.enCours = false;
     $("#imp-annuler").disabled = false;
     $("#import").hidden = true;
@@ -440,17 +541,23 @@ async function lancerImport() {
 
 // ---------- démarrage ----------
 function brancher() {
-  $("#b-importer").onclick = ouvrirImport;
-  $("#b-importer2").onclick = ouvrirImport;
+  $("#b-importer").onclick = () => ouvrirImport();
+  $("#b-importer2").onclick = () => ouvrirImport();
   $("#b-theme").onclick = basculerTheme;
   $("#b-apercu").onclick = () => etat.livre && ouvrirApercu();
   $("#b-retour").onclick = () => afficherLecture();
   $("#imp-fermer").onclick = fermerImport;
   $("#imp-annuler").onclick = fermerImport;
   $("#imp-fichier").onclick = choisirFichier;
+  $("#imp-images").onclick = choisirImages;
+  $$("#imp-onglets button").forEach((b) => (b.onclick = () => choisirOnglet(b.dataset.type)));
+  $("#imp-texte").addEventListener("input", majImport);
+  $("#imp-url").addEventListener("input", majImport);
+  $("#imp-url").addEventListener("keydown", (e) => { if (e.key === "Enter") lancerImport(); });
+  document.addEventListener("paste", lireCollage);
   $("#imp-go").onclick = lancerImport;
-  $("#p-prec").onclick = () => { const p = etat.livre.pages; allerPage(p[Math.max(0, p.indexOf(etat.ap.page) - 1)]); };
-  $("#p-suiv").onclick = () => { const p = etat.livre.pages; allerPage(p[Math.min(p.length - 1, p.indexOf(etat.ap.page) + 1)]); };
+  $("#p-prec").onclick = () => { const p = pagesApercu(); allerPage(p[Math.max(0, p.indexOf(etat.ap.page) - 1)]); };
+  $("#p-suiv").onclick = () => { const p = pagesApercu(); allerPage(p[Math.min(p.length - 1, p.indexOf(etat.ap.page) + 1)]); };
   $("#b-plus-auto").onclick = () => { etat.ap.autoTout = true; dessinerAuto(); };
   $("#b-lu").onclick = () => {
     etat.ap.lu = !etat.ap.lu;

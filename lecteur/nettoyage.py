@@ -106,6 +106,19 @@ def corriger_texte(texte: str, journal: list | None = None, apprises: dict[str, 
 
     t = re.sub(r"(?<![\w*])(\*11|\*II|II|\*Il)(\s+[a-zà-ÿ’'])", r_il, t)
 
+    # Erreurs typiques de la reconnaissance de texte des captures : « 1'espèce », « intègre)) ».
+    def r_sub(motif: str, rempl: str, texte: str) -> str:
+        def f(m: re.Match) -> str:
+            nouveau = m.expand(rempl)
+            if journal is not None:
+                journal.append((m.group(0), nouveau))
+            return nouveau
+        return re.sub(motif, f, texte)
+
+    t = r_sub(r"(?<![\w\d])1(['’])(?=[a-zà-ÿ])", r"l\1", t)
+    t = r_sub(r"(?<=\w)\s?\)\)", "»", t)
+    t = r_sub(r"\(\(\s?(?=\w)", "«", t)
+
     t = corriger_references(t, journal)
 
     # Corrections apprises (mot exact -> remplacement), mémorisées depuis les aperçus précédents.

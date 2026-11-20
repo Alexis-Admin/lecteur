@@ -88,7 +88,7 @@ def liste() -> list[dict]:
         if not f.exists():
             continue
         m = lire_json(d / "meta.json", {})
-        res.append({"id": d.name, "titre": m.get("titre") or d.name, "profil": m.get("profil", ""),
+        res.append({"id": d.name, "titre": m.get("titre") or d.name, "profil": m.get("profil", ""), "type": m.get("type", "pdf"),
                     "pages": m.get("nb_pages", 0), "sections": m.get("nb_sections", 0), "importe_le": m.get("importe_le", "")})
     return res
 
