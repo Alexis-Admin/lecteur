@@ -112,6 +112,8 @@ async function ouvrirLivre(id, vue = "lecture") {
   $("#livre-info").textContent = `${l.pages.length ? pl(l.pages.length, l.meta.type === "images" ? "image" : "page") + " · " : ""}${pl(l.sections.length, "section")}`;
   $("#livre-progres").style.width = "0%";
   $("#b-apercu").disabled = false;
+  $("#b-usb").disabled = false;
+  $("#b-usb").title = "Copier les MP3 sur une clé USB";
   $("#modes").hidden = !aDesNotes(l);
   const memo = (etat.reglages.sections || {})[id];
   etat.section = l.sections.find((s) => s.id === memo) || l.sections[0] || null;
@@ -711,6 +713,125 @@ async function basculerPopVoix() {
   }));
 }
 
+// ---------- export clé USB (phase 2.4) ----------
+etat.exp = { plan: null, dest: null, mode: "mixte", vitesse: 1, minuterie: null, etape: "pret" };
+const VIT_EXPORT = [1, 1.1, 1.25, 1.5, 1.75, 2];
+const mo = (o) => (o >= 1e9 ? (o / 1e9).toLocaleString("fr-CA", { maximumFractionDigits: 1 }) + " Go" : Math.max(1, Math.round(o / 1e6)).toLocaleString("fr-CA") + " Mo");
+const duree = (s) => { s = Math.round(s || 0); if (s < 60) return `${s} s`; const h = Math.floor(s / 3600), m = Math.round((s % 3600) / 60); return h ? `${h} h ${String(m).padStart(2, "0")}` : `${m} min`; };
+const ICONE_CLE = '<svg viewBox="0 0 24 24"><rect x="7" y="9" width="10" height="13" rx="2"/><path d="M9 9V3h6v6"/></svg>';
+const ICONE_DOSSIER = '<svg viewBox="0 0 24 24"><path d="M3 7a2 2 0 0 1 2-2h4l2 2h8a2 2 0 0 1 2 2v8a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z"/></svg>';
+
+async function ouvrirExport() {
+  if (!etat.livre) return;
+  const r = etat.reglages.export || {};
+  etat.exp.mode = aDesNotes(etat.livre) ? (r.mode || etat.mode || "mixte") : "texte";
+  etat.exp.vitesse = r.vitesse || 1;
+  etat.exp.etape = "pret";
+  $("#export").hidden = false;
+  $("#exp-sous").textContent = `${etat.livre.titre} · ${etat.livre.sections.length} sections`;
+  await chargerPlanExport();
+}
+function fermerExport() { if (etat.exp.etape !== "copie") { $("#export").hidden = true; clearTimeout(etat.exp.minuterie); } }
+
+async function chargerPlanExport() {
+  const p = await api.plan_export(etat.livre.id, etat.exp.mode, etat.exp.vitesse);
+  etat.exp.plan = p;
+  if (!etat.exp.dest || (etat.exp.dest.lettre && !p.cles.some((c) => c.lettre === etat.exp.dest.lettre)))
+    etat.exp.dest = p.cles[0] ? { lettre: p.cles[0].lettre, chemin: p.cles[0].lettre + "\\" } : null;
+  dessinerExport();
+}
+
+function dessinerExport() {
+  const p = etat.exp.plan, d = etat.exp.dest, corps = $("#exp-corps"), boutons = $("#exp-boutons");
+  if (etat.exp.etape === "copie" || etat.exp.etape === "fini") return dessinerCopie();
+  const cles = p.cles.map((c) => {
+    const pris = 1 - c.libre / c.total;
+    return `<button class="cle ${d && d.lettre === c.lettre ? "on" : ""}" data-lettre="${c.lettre}">
+      <span class="ic">${ICONE_CLE}</span><span class="c-txt"><span class="c-l1"><b>${echap(c.nom)} (${c.lettre})</b>
+      <span class="mono petit">${mo(c.libre)} libres sur ${mo(c.total)}</span></span><span class="rail"><i style="width:${Math.max(2, pris * 100)}%"></i></span></span></button>`;
+  }).join("");
+  const dossierPerso = d && !d.lettre ? `<button class="cle on"><span class="ic">${ICONE_DOSSIER}</span><span class="c-txt"><span class="c-l1"><b>${echap(d.chemin)}</b></span></span></button>` : "";
+  const aucune = !p.cles.length && !dossierPerso ? `<div class="avert"><span>Aucune clé USB détectée. Branche-la, puis clique sur « Actualiser ».</span></div>` : "";
+  const manque = p.prets < p.total ? `<div class="avert"><span>L'audio n'est pas complet : <b>${p.prets} sections sur ${p.total}</b> sont prêtes. Seules celles-ci seront copiées.</span>
+      <button class="pil" id="exp-gen">Créer le reste de l'audio</button></div>` : "";
+  const cle = d && d.lettre ? p.cles.find((c) => c.lettre === d.lettre) : null;
+  const tropPetit = cle && p.octets > cle.libre ? `<div class="avert"><span>Pas assez de place sur la clé : il faut environ ${mo(p.octets)}.</span></div>` : "";
+  const segMode = aDesNotes(etat.livre) ? `<div><span class="lab-c">Quoi copier</span><div class="seg" id="exp-modes" style="width:max-content;margin-top:6px">
+      ${[["texte", "Texte"], ["notes", "Notes"], ["mixte", "Texte + notes"]].map(([m, n]) => `<button data-m="${m}" class="${m === etat.exp.mode ? "on" : ""}">${n}</button>`).join("")}</div></div>` : "";
+  const fich = p.fichiers.slice(0, 8).map((f) => `<div class="f ${f.duree ? "" : "manque"}"><span class="nom">${echap(f.fichier)}</span><span class="d">${f.duree ? fmt(f.duree) : "pas d'audio"}</span></div>`).join("")
+    + (p.fichiers.length > 8 ? `<div class="f"><span class="nom petit">… et ${p.fichiers.length - 8} autres</span></div>` : "");
+  corps.innerHTML = `
+    <div><span class="lab-c">Où copier</span><div class="cles" style="margin-top:6px">${cles}${dossierPerso}${aucune}</div>
+      <div class="liens-cle" style="margin-top:6px"><button class="lien" id="exp-actu">Actualiser</button><button class="lien" id="exp-dossier">Choisir un dossier…</button></div></div>
+    ${segMode}
+    <div><span class="lab-c">Vitesse dans les MP3</span><div class="seg" id="exp-vit" style="width:max-content;margin-top:6px">
+      ${VIT_EXPORT.map((v) => `<button data-v="${v}" class="${v === etat.exp.vitesse ? "on" : ""}">${String(v).replace(".", ",")}x</button>`).join("")}</div>
+      <p class="petit" style="margin:4px 0 0">La radio de l'auto ne peut pas accélérer : la vitesse est intégrée aux fichiers, sans changer la voix.</p></div>
+    ${manque}${tropPetit}
+    <div class="liste-f" aria-label="Fichiers qui seront copiés">${fich}</div>
+    <p class="petit" style="margin:0">Dossier <span class="mono">${echap((d ? d.chemin.replace(/\\$/, "") : "?") + "\\" + p.dossier)}</span> · titre, livre et n° de piste dans chaque MP3 · copiés un par un dans l'ordre (radios d'auto).</p>`;
+  $("#exp-resume").textContent = p.prets ? `${duree(p.duree)} · ${mo(p.octets)}` : "";
+  const possible = d && p.prets > 0 && !tropPetit;
+  boutons.innerHTML = `<button class="sec2" id="exp-annuler">Annuler</button><button class="prim" id="exp-go" ${possible ? "" : "disabled"}>Copier ${p.prets} MP3</button>`;
+  $$("#exp-corps .cle[data-lettre]").forEach((b) => (b.onclick = () => { etat.exp.dest = { lettre: b.dataset.lettre, chemin: b.dataset.lettre + "\\" }; dessinerExport(); }));
+  $("#exp-actu").onclick = chargerPlanExport;
+  $("#exp-dossier").onclick = async () => { const c = await api.choisir_dossier(); if (c) { etat.exp.dest = { lettre: null, chemin: c }; dessinerExport(); } };
+  $$("#exp-modes button").forEach((b) => (b.onclick = () => { etat.exp.mode = b.dataset.m; chargerPlanExport(); }));
+  $$("#exp-vit button").forEach((b) => (b.onclick = () => { etat.exp.vitesse = Number(b.dataset.v); chargerPlanExport(); }));
+  if ($("#exp-gen")) $("#exp-gen").onclick = async () => { await api.generer_audio(etat.livre.id); fermerExport(); majAudio(); toast("Création de l'audio lancée."); };
+  $("#exp-annuler").onclick = fermerExport;
+  $("#exp-go").onclick = lancerExport;
+}
+
+async function lancerExport() {
+  const d = etat.exp.dest;
+  await api.exporter_usb(etat.livre.id, d.chemin, etat.exp.mode, etat.exp.vitesse);
+  etat.reglages.export = { mode: etat.exp.mode, vitesse: etat.exp.vitesse };
+  etat.exp.etape = "copie";
+  suivreExport();
+}
+
+async function suivreExport() {
+  const x = await api.etat_export();
+  etat.exp.x = x;
+  if (!x.en_cours) etat.exp.etape = "fini";
+  dessinerCopie();
+  if (x.en_cours) etat.exp.minuterie = setTimeout(suivreExport, 700);
+}
+
+function dessinerCopie() {
+  const x = etat.exp.x || {}, corps = $("#exp-corps"), boutons = $("#exp-boutons"), d = etat.exp.dest;
+  if (etat.exp.etape === "copie") {
+    const pc = x.total ? Math.max(1, Math.floor((x.fait / x.total) * 100)) : 1;
+    corps.innerHTML = `<div style="display:flex;flex-direction:column;gap:8px">
+      <div class="ligne-progres"><span>${x.fichier ? "Copie de <span class=\"mono\">" + echap(x.fichier) + "</span>" : "Préparation des fichiers…"}</span><span class="mono">${x.fait || 0} / ${x.total || "…"}</span></div>
+      <div class="rail rail-l"><i style="width:${pc}%"></i></div>
+      <span class="petit">Ne retire pas la clé pendant la copie.</span></div>`;
+    $("#exp-resume").textContent = "";
+    boutons.innerHTML = `<button class="sec2" id="exp-stop">Arrêter</button>`;
+    $("#exp-stop").onclick = () => api.arreter_export();
+    return;
+  }
+  const r = x.resultat;
+  if (x.erreur || !r) {
+    corps.innerHTML = `<p class="erreur">${echap(x.erreur || "La copie n'a pas pu se faire.")}</p>`;
+    boutons.innerHTML = `<button class="sec2" id="exp-ok">Fermer</button>`;
+    $("#exp-ok").onclick = () => { etat.exp.etape = "pret"; fermerExport(); };
+    return;
+  }
+  corps.innerHTML = `<div class="verdict"><svg viewBox="0 0 24 24"><circle cx="12" cy="12" r="10"/><path d="M7.5 12.5l3 3 6-7"/></svg>
+    <div><b>${r.copies} MP3 copiés et vérifiés${r.interrompu ? " (copie arrêtée)" : ""}</b><span>${duree(r.duree)} d'écoute · ${mo(r.octets)} · <span class="mono">${echap(r.dossier)}</span></span></div></div>`;
+  $("#exp-resume").textContent = d && d.lettre ? "Tu peux retirer la clé après l'éjection." : "";
+  boutons.innerHTML = `<button class="sec2" id="exp-ouvrir">Ouvrir le dossier</button>${d && d.lettre ? '<button class="prim" id="exp-ejecter">Éjecter la clé</button>' : '<button class="prim" id="exp-ok">Terminé</button>'}`;
+  $("#exp-ouvrir").onclick = () => api.ouvrir_dossier(r.dossier);
+  if ($("#exp-ok")) $("#exp-ok").onclick = () => { etat.exp.etape = "pret"; fermerExport(); };
+  if ($("#exp-ejecter")) $("#exp-ejecter").onclick = async () => {
+    const ok = await api.ejecter_cle(d.lettre);
+    toast(ok ? "Clé éjectée : tu peux la retirer." : "Windows refuse d'éjecter la clé : ferme les fenêtres qui l'utilisent et réessaie.");
+    if (ok) { etat.exp.etape = "pret"; fermerExport(); }
+  };
+}
+
 // ---------- démarrage ----------
 function brancher() {
   $("#b-importer").onclick = () => ouvrirImport();
@@ -728,6 +849,8 @@ function brancher() {
   $("#imp-url").addEventListener("keydown", (e) => { if (e.key === "Enter") lancerImport(); });
   document.addEventListener("paste", lireCollage);
   brancherAudio();
+  $("#b-usb").onclick = ouvrirExport;
+  $("#exp-fermer").onclick = fermerExport;
   $("#imp-go").onclick = lancerImport;
   $("#p-prec").onclick = () => { const p = pagesApercu(); allerPage(p[Math.max(0, p.indexOf(etat.ap.page) - 1)]); };
   $("#p-suiv").onclick = () => { const p = pagesApercu(); allerPage(p[Math.min(p.length - 1, p.indexOf(etat.ap.page) + 1)]); };
@@ -745,12 +868,13 @@ function brancher() {
     if (e.ctrlKey && e.key.toLowerCase() === "o") { e.preventDefault(); ouvrirImport(); }
     else if (e.ctrlKey && e.key.toLowerCase() === "j") { e.preventDefault(); basculerTheme(); }
     else if (e.key === "Escape") {
-      if (!$("#import").hidden) fermerImport();
+      if (!$("#export").hidden) fermerExport();
+      else if (!$("#import").hidden) fermerImport();
       else if (!$("#vue-apercu").hidden && !edition) afficherLecture();
     } else if (!edition && !$("#vue-apercu").hidden && (e.key === "PageDown" || e.key === "PageUp")) {
       e.preventDefault();
       (e.key === "PageDown" ? $("#p-suiv") : $("#p-prec")).click();
-    } else if (!edition && !$("#vue-lecture").hidden && $("#import").hidden && $("#a-play")) {
+    } else if (!edition && !$("#vue-lecture").hidden && $("#import").hidden && $("#export").hidden && $("#a-play")) {
       // Raccourcis du lecteur audio
       const a = $("#audio");
       if (e.key === " ") { e.preventDefault(); basculerLecture(); }

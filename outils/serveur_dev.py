@@ -33,6 +33,17 @@ class ApiDev(Api):
         chemin = os.environ.get("LECTEUR_DEV_PDF")
         return self.infos_pdf(chemin) if chemin else None
 
+    def choisir_dossier(self):
+        return os.environ.get("LECTEUR_DEV_DOSSIER")
+
+    def cles_usb(self):
+        return []  # en développement, on n'écrit jamais sur une vraie clé
+
+    def plan_export(self, *args):
+        p = super().plan_export(*args)
+        p["cles"] = []
+        return p
+
     def choisir_images(self):
         chemins = [c for c in os.environ.get("LECTEUR_DEV_IMAGES", "").split(";") if c]
         return [{"chemin": c, "nom": Path(c).name} for c in chemins]

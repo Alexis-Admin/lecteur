@@ -190,6 +190,21 @@
   </div>
 </div>
 
+<!-- Export clé USB -->
+<div class="voile" id="export" hidden>
+  <div class="boite" role="dialog" aria-modal="true" aria-labelledby="exp-titre">
+    <div class="bt">
+      <div><h2 id="exp-titre">Copier sur la clé USB</h2><p id="exp-sous"></p></div>
+      <button class="x" id="exp-fermer" aria-label="Fermer" title="Fermer (Échap)"><svg viewBox="0 0 24 24"><path d="M6 6l12 12M18 6L6 18"/></svg></button>
+    </div>
+    <div class="bc" id="exp-corps"></div>
+    <div class="pied">
+      <span class="petit mono" id="exp-resume"></span>
+      <div class="pied-b" id="exp-boutons"></div>
+    </div>
+  </div>
+</div>
+
 <div class="toast" id="toast" role="status" aria-live="polite"></div>
 <script src="app.js"></script>
 </body>

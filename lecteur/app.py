@@ -4,6 +4,7 @@ from __future__ import annotations
 import asyncio
 import base64
 import json
+import os
 import shutil
 import threading
 import time
@@ -12,8 +13,8 @@ from pathlib import Path
 import pymupdf
 import webview
 
-from . import __version__, bibliotheque, douteux, serveur_audio
-from .assemblage import assembler
+from . import __version__, bibliotheque, douteux, export_usb, serveur_audio
+from .assemblage import assembler, duree_section
 from .audio import etat_audio, generer_livre
 from .importer import PROFILS, importer_pdf, lire_pages
 from .modele import Livre
@@ -32,6 +33,7 @@ class Api:
         self._verrou = threading.Lock()
         self._livres: dict[str, Livre] = {}
         self._generation: dict | None = None  # création d'audio en cours
+        self._export: dict | None = None  # copie sur clé USB en cours
 
     # --- utilitaires -------------------------------------------------------
     def _js(self, code: str) -> None:
@@ -340,6 +342,67 @@ class Api:
             return {"pas_pret": True}
         return {"url": serveur_audio.adresse(r["mp3"]), "duree": r["duree"],
                 "minutage": json.loads(r["minutage"].read_text(encoding="utf-8"))}
+
+    # --- export clé USB (phase 2.4) -------------------------------------------
+    def cles_usb(self) -> list[dict]:
+        return export_usb.cles_usb()
+
+    def choisir_dossier(self) -> str | None:
+        r = self._fenetre.create_file_dialog(webview.FOLDER_DIALOG)
+        return (r[0] if isinstance(r, (list, tuple)) else r) if r else None
+
+    def plan_export(self, livre_id: str, mode: str, vitesse: float) -> dict:
+        livre, voix, dossier = self._livre(livre_id), self._voix(), self._dossier(livre_id)
+        durees = [duree_section(dossier, livre, s, mode, voix) for s in livre.sections]
+        fichiers = export_usb.plan(livre, durees, vitesse)
+        prets = [f for f in fichiers if f["duree"]]
+        duree = sum(f["duree"] for f in prets)
+        return {"fichiers": fichiers, "prets": len(prets), "total": len(fichiers), "duree": duree,
+                "octets": int(duree * 6000) + 4096 * len(prets),  # 48 kbit/s = 6 000 octets/s
+                "dossier": export_usb.nom_fichier(livre.titre, 60), "cles": export_usb.cles_usb()}
+
+    def exporter_usb(self, livre_id: str, destination: str, mode: str, vitesse: float) -> dict:
+        if self._export and self._export["en_cours"]:
+            return {"deja": True}
+        livre, voix, dossier = self._livre(livre_id), self._voix(), self._dossier(livre_id)
+        nom_voix = next((v.nom for v in liste_des_voix() if v.id == voix), "")
+        x = {"en_cours": True, "arret": False, "fait": 0, "total": 0, "fichier": "", "resultat": None, "erreur": None}
+        self._export = x
+        self.enregistrer_reglages({"export": {"mode": mode, "vitesse": vitesse}})
+
+        def progres(fait, total, fichier):
+            x.update(fait=fait, total=total, fichier=fichier)
+
+        def travail():
+            try:
+                x["resultat"] = export_usb.exporter(dossier, livre, Path(destination), mode, vitesse, voix, nom_voix,
+                                                    progres, lambda: x["arret"])
+            except Exception as e:  # noqa: BLE001 - clé retirée, pleine…
+                x["erreur"] = f"La copie s'est arrêtée : {e}"
+            finally:
+                x["en_cours"] = False
+
+        threading.Thread(target=travail, daemon=True).start()
+        return {"lance": True}
+
+    def etat_export(self) -> dict:
+        x = self._export or {}
+        return {k: v for k, v in x.items() if k != "arret"}
+
+    def arreter_export(self) -> bool:
+        if self._export:
+            self._export["arret"] = True
+        return True
+
+    def ejecter_cle(self, lettre: str) -> bool:
+        return export_usb.ejecter(lettre)
+
+    def ouvrir_dossier(self, chemin: str) -> bool:
+        p = Path(chemin)
+        if p.exists() and p.is_dir():
+            os.startfile(str(p))  # noqa: S606 - ouvre l'Explorateur sur le dossier exporté
+            return True
+        return False
 
 
 def lancer() -> None:

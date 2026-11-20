@@ -64,6 +64,14 @@ def morceaux(dossier_livre: Path, livre: Livre, section: Section, mode: str, voi
     return res
 
 
+def duree_section(dossier_livre: Path, livre: Livre, section: Section, mode: str, voix: str) -> float | None:
+    """Durée de la section sans l'assembler (None si son audio n'est pas complet)."""
+    liste = morceaux(dossier_livre, livre, section, mode, voix)
+    if not liste:
+        return None
+    return sum(json.loads(a.minutage.read_text(encoding="utf-8"))["duree"] + s for _, a, s in liste)
+
+
 def _ligne_concat(chemin: Path) -> str:
     return "file '" + chemin.as_posix().replace("'", "'\\''") + "'"
 

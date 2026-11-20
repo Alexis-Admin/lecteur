@@ -246,6 +246,28 @@ body[data-theme="nuit"] .tout-bon { background: #12261A; color: #7FD4A0; }
 .pied { padding: 14px 22px 18px; display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: 10px; border-top: 1px solid var(--filet); background: var(--fond); }
 .pied-b { display: flex; gap: 8px; }
 
+/* ---------- Export clé USB ---------- */
+.cles { display: flex; flex-direction: column; gap: 6px; }
+.cle { display: flex; align-items: center; gap: 12px; padding: 10px 12px; border-radius: 12px; background: var(--fond); border: 1px solid var(--filet); text-align: left; width: 100%; }
+.cle.on { box-shadow: inset 0 0 0 1.5px var(--accent-vif); border-color: var(--accent-vif); }
+.cle .ic { width: 34px; height: 34px; border-radius: 10px; background: var(--prim); color: var(--prim-t); display: inline-flex; align-items: center; justify-content: center; flex: none; }
+.cle .c-txt { flex: 1 1 auto; display: flex; flex-direction: column; gap: 4px; min-width: 0; }
+.cle .c-l1 { display: flex; justify-content: space-between; gap: 8px; flex-wrap: wrap; font-size: 13px; }
+.cle .c-l1 b { font-weight: 600; }
+.cle .rail { background: var(--filet); }
+.liens-cle { display: flex; gap: 12px; }
+.liste-f { border: 1px solid var(--filet); border-radius: 12px; max-height: 190px; overflow: auto; }
+.f { display: flex; align-items: center; gap: 10px; padding: 7px 12px; border-bottom: 1px solid var(--filet); font-size: 12.5px; }
+.f:last-child { border-bottom: none; }
+.f .nom { flex: 1 1 auto; min-width: 0; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; font-family: "JetBrains Mono", monospace; font-size: 12px; }
+.f .d { color: var(--texte2); font-family: "JetBrains Mono", monospace; font-size: 12px; }
+.f.manque .nom, .f.manque .d { color: var(--texte2); text-decoration: line-through; }
+.verdict { display: flex; gap: 12px; align-items: center; padding: 14px; border-radius: 12px; background: #E9F7EF; color: #15803D; }
+body[data-theme="nuit"] .verdict { background: #12261A; color: #7FD4A0; }
+.verdict svg { width: 28px; height: 28px; }
+.verdict b { display: block; font-size: 15px; } .verdict span { color: var(--texte); font-size: 13px; }
+.avert { padding: 10px 12px; border-radius: 10px; background: var(--douteux); color: var(--douteux-t); font-size: 13px; display: flex; gap: 10px; align-items: center; justify-content: space-between; flex-wrap: wrap; }
+
 .toast { position: fixed; bottom: 18px; left: 50%; transform: translate(-50%, 20px); opacity: 0; background: var(--prim); color: var(--prim-t);
   padding: 9px 16px; border-radius: 999px; font-size: 13px; transition: opacity .2s, transform .2s; pointer-events: none; z-index: 30; }
 .toast.on { opacity: 1; transform: translate(-50%, 0); }
