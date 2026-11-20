@@ -99,6 +99,9 @@ async function ouvrirLivre(id, vue = "lecture") {
     return;
   }
   sauverReglages({ dernier_livre: id });
+  $("#audio").pause();
+  etat.audio.chargee = null;
+  etat.audio.e = null;
   const l = etat.livre;
   $("#carte-livre").hidden = false;
   $("#livre-titre").textContent = l.titre;
@@ -115,6 +118,8 @@ async function ouvrirLivre(id, vue = "lecture") {
   dessinerSections();
   chargerLivres();
   if (vue === "apercu") ouvrirApercu(); else afficherLecture();
+  await majAudio();
+  if (vue !== "apercu" && sectionPrete()) chargerAudioSection(false);
 }
 
 function dessinerSections() {
@@ -169,6 +174,8 @@ function afficherLecture() {
   }
   $("#page-lecture").innerHTML = html;
   $("#zone-lecture").scrollTop = 0;
+  if (etat.audio.e && !etat.audio.e.en_cours && sectionPrete()) chargerAudioSection(false);
+  else dessinerBarreAudio();
 }
 
 // ---------- aperçu ----------
@@ -541,6 +548,169 @@ async function lancerImport() {
   }
 }
 
+// ---------- audio (phase 2) ----------
+const ICONES = {
+  play: '<svg viewBox="0 0 24 24"><path d="M8 5l11 7-11 7z"/></svg>',
+  pause: '<svg viewBox="0 0 24 24"><rect x="6" y="5" width="4" height="14" rx="1"/><rect x="14" y="5" width="4" height="14" rx="1"/></svg>',
+  prec: '<svg viewBox="0 0 24 24"><path d="M6 5v14M18 6l-9 6 9 6z"/></svg>',
+  suiv: '<svg viewBox="0 0 24 24"><path d="M18 5v14M6 6l9 6-9 6z"/></svg>',
+};
+etat.audio = { e: null, minuterie: null, debut: null, chargee: null, voix: null };
+const VITESSES = [0.75, 1, 1.1, 1.25, 1.5, 1.75, 2, 2.5, 3];
+const fmt = (s) => { s = Math.max(0, Math.floor(s || 0)); const h = Math.floor(s / 3600), m = Math.floor((s % 3600) / 60), x = s % 60;
+  return (h ? h + ":" + String(m).padStart(2, "0") : String(m).padStart(2, "0")) + ":" + String(x).padStart(2, "0"); };
+
+async function majAudio() {
+  if (!etat.livre) return;
+  const id = etat.livre.id;
+  const e = await api.etat_audio(id);
+  if (!etat.livre || etat.livre.id !== id) return;
+  etat.audio.e = e;
+  if (e.en_cours) {
+    if (!etat.audio.debut) etat.audio.debut = { t: Date.now(), fait: e.fait };
+    clearTimeout(etat.audio.minuterie);
+    etat.audio.minuterie = setTimeout(majAudio, 1000);
+  } else {
+    if (etat.audio.debut) { etat.audio.debut = null; toast(e.erreurs.length ? "Création arrêtée : " + e.erreurs[0] : "Audio créé."); }
+  }
+  dessinerBarreAudio();
+}
+
+function sectionPrete() {
+  const e = etat.audio.e;
+  if (!e || !etat.section) return false;
+  const s = e.sections.find((x) => x.id === etat.section.id);
+  return s && s.total > 0 && s.fait === s.total;
+}
+
+function dessinerBarreAudio() {
+  const e = etat.audio.e, b = $("#barre-audio");
+  if (!e) { b.innerHTML = ""; return; }
+  if (e.en_cours) {
+    const pc = e.total ? Math.max(1, Math.floor((e.fait / e.total) * 100)) : 0;
+    let reste = "";
+    const d = etat.audio.debut;
+    if (d && e.fait > d.fait + 2) {
+      const sec = ((Date.now() - d.t) / 1000 / (e.fait - d.fait)) * (e.total - e.fait);
+      reste = sec < 90 ? `environ ${Math.round(sec)} s` : `environ ${Math.round(sec / 60)} min`;
+    }
+    b.innerHTML = `<div class="gen"><div class="l1"><span>Création de l'audio… <b>${e.fait.toLocaleString("fr-CA")} / ${e.total.toLocaleString("fr-CA")}</b> morceaux</span><span>${reste}</span></div>
+      <div class="rail"><i style="width:${pc}%"></i></div></div>
+      <button class="sec3" id="b-pause-gen" title="Arrêter ; tu pourras reprendre où ça s'est arrêté">Pause</button>`;
+    $("#b-pause-gen").onclick = async () => { await api.arreter_audio(); toast("Arrêt après les morceaux en cours…"); };
+    return;
+  }
+  if (sectionPrete()) { dessinerLecteur(); return; }
+  const fini = e.total && e.fait === e.total;
+  const msg = e.autre_en_cours ? "Un autre livre est en train de créer son audio. Attends qu'il finisse."
+    : e.fait === 0 ? `L'audio n'est pas encore créé (${e.total.toLocaleString("fr-CA")} morceaux). Vérifie le texte dans <b>Aperçu</b>, puis lance la création.`
+    : fini ? "Cette section n'a rien à lire." : `Audio créé à <b>${Math.floor((e.fait / e.total) * 100)} %</b>. Tu peux continuer où ça s'est arrêté.`;
+  const err = e.erreurs && e.erreurs.length ? `<br><span style="color:#FFB4A8">${echap(e.erreurs[0])}</span>` : "";
+  b.innerHTML = `<span class="lecteur-msg">${msg}${err}</span>
+    <button class="prim" id="b-gen" ${e.autre_en_cours || fini ? "disabled" : ""}>${e.fait ? "Continuer" : "Générer l'audio"}</button>`;
+  const bg = $("#b-gen");
+  if (bg) bg.onclick = async () => { await api.generer_audio(etat.livre.id); etat.audio.debut = null; majAudio(); };
+}
+
+function dessinerLecteur() {
+  const a = $("#audio"), l = etat.livre, i = l.sections.indexOf(etat.section);
+  const v = etat.reglages.vitesse || 1;
+  $("#barre-audio").innerHTML = `
+    <div class="ctl">
+      <button class="cb" id="a-prec" aria-label="Section précédente" title="Section précédente (Ctrl+←)" ${i <= 0 ? "disabled" : ""}>${ICONES.prec}</button>
+      <button class="cb" id="a-moins" aria-label="Reculer de 15 secondes" title="Reculer de 15 s (←)">−15</button>
+      <button class="play" id="a-play" aria-label="Lecture ou pause" title="Lecture / pause (Espace)">${a.paused ? ICONES.play : ICONES.pause}</button>
+      <button class="cb" id="a-plus" aria-label="Avancer de 15 secondes" title="Avancer de 15 s (→)">+15</button>
+      <button class="cb" id="a-suiv" aria-label="Section suivante" title="Section suivante (Ctrl+→)" ${i >= l.sections.length - 1 ? "disabled" : ""}>${ICONES.suiv}</button>
+    </div>
+    <div class="temps"><div class="l1"><span class="mono" id="a-t">${fmt(a.currentTime)}</span><span>${i < l.sections.length - 1 ? "Suivante : " + echap(l.sections[i + 1].ref || l.sections[i + 1].titre) : "Fin du livre"}</span><span class="mono" id="a-reste">−${fmt((a.duration || 0) - a.currentTime)}</span></div>
+      <div class="rail" id="a-rail" title="Cliquer pour aller à cet endroit"><i id="a-barre" style="width:${a.duration ? (a.currentTime / a.duration) * 100 : 0}%"></i></div></div>
+    <select class="vit" id="a-vit" aria-label="Vitesse de lecture" title="Vitesse : 0,75x à 3x ([ et ])">
+      ${VITESSES.map((x) => `<option value="${x}" ${x === v ? "selected" : ""}>${String(x).replace(".", ",")}x</option>`).join("")}</select>`;
+  $("#a-play").onclick = basculerLecture;
+  $("#a-moins").onclick = () => sauter(-15);
+  $("#a-plus").onclick = () => sauter(15);
+  $("#a-prec").onclick = () => changerSection(-1, !a.paused);
+  $("#a-suiv").onclick = () => changerSection(1, !a.paused);
+  $("#a-vit").onchange = (ev) => { const x = Number(ev.target.value); a.playbackRate = x; sauverReglages({ vitesse: x }); };
+  $("#a-rail").onclick = (ev) => { const r = ev.currentTarget.getBoundingClientRect(); if (a.duration) a.currentTime = ((ev.clientX - r.left) / r.width) * a.duration; };
+}
+
+async function chargerAudioSection(jouer = false) {
+  const l = etat.livre, s = etat.section, a = $("#audio");
+  if (!l || !s || !sectionPrete()) return false;
+  const mode = aDesNotes(l) ? etat.mode : "texte";
+  const cle = `${l.id}|${s.id}|${mode}|${etat.audio.e.voix}`;
+  if (etat.audio.chargee !== cle) {
+    const r = await api.audio_section(l.id, s.id, mode);
+    if (!r.url) { if (r.erreur) toast(r.erreur); return false; }
+    etat.audio.chargee = cle;
+    a.src = r.url;
+    a.playbackRate = etat.reglages.vitesse || 1;
+  }
+  if (jouer) { try { await a.play(); } catch (e) { /* lecture refusée */ } }
+  dessinerLecteur();
+  return true;
+}
+
+async function basculerLecture() {
+  const a = $("#audio");
+  if (!a.src || etat.audio.chargee === null) { await chargerAudioSection(true); return; }
+  if (a.paused) a.play(); else a.pause();
+}
+function sauter(sec) { const a = $("#audio"); if (a.duration) a.currentTime = Math.min(a.duration, Math.max(0, a.currentTime + sec)); }
+async function changerSection(delta, jouer) {
+  const l = etat.livre, i = l.sections.indexOf(etat.section) + delta;
+  if (i < 0 || i >= l.sections.length) return;
+  choisirSection(l.sections[i].id);
+  if (sectionPrete()) await chargerAudioSection(jouer);
+}
+
+function brancherAudio() {
+  const a = $("#audio");
+  a.addEventListener("loadedmetadata", () => $("#a-reste") && ($("#a-reste").textContent = "−" + fmt(a.duration - a.currentTime)));
+  a.addEventListener("timeupdate", () => {
+    if (!$("#a-t")) return;
+    $("#a-t").textContent = fmt(a.currentTime);
+    $("#a-reste").textContent = "−" + fmt((a.duration || 0) - a.currentTime);
+    $("#a-barre").style.width = a.duration ? `${(a.currentTime / a.duration) * 100}%` : "0%";
+  });
+  a.addEventListener("play", () => $("#a-play") && ($("#a-play").innerHTML = ICONES.pause));
+  a.addEventListener("pause", () => $("#a-play") && ($("#a-play").innerHTML = ICONES.play));
+  a.addEventListener("ended", () => changerSection(1, true));
+  $("#b-voix").onclick = (ev) => { ev.stopPropagation(); basculerPopVoix(); };
+  document.addEventListener("click", (ev) => { if (!$("#pop-voix").hidden && !$("#pop-voix").contains(ev.target)) $("#pop-voix").hidden = true; });
+}
+
+async function basculerPopVoix() {
+  const pop = $("#pop-voix");
+  if (!pop.hidden) { pop.hidden = true; return; }
+  const v = await api.voix();
+  etat.audio.voix = v;
+  pop.innerHTML = `<span class="lab-c">Voix de lecture</span>` + v.voix.map((x) => `
+    <div class="v-ligne ${x.id === v.choisie ? "on" : ""}">
+      <button class="pb" data-ecouter="${x.id}" aria-label="Écouter ${echap(x.nom)}" title="Écouter un extrait">${ICONES.play}</button>
+      <div class="v-txt" data-choisir="${x.id}"><b>${echap(x.nom)}</b><span>${echap(x.description)}</span></div></div>`).join("")
+    + `<p class="note-pop">Changer de voix refait l'audio des livres (environ 20 fois plus vite que la durée d'écoute).</p>`;
+  pop.hidden = false;
+  $$("#pop-voix [data-ecouter]").forEach((bt) => (bt.onclick = async (ev) => {
+    ev.stopPropagation();
+    bt.disabled = true;
+    try { const src = await api.extrait_voix(bt.dataset.ecouter); const ex = new Audio(src); ex.play(); }
+    catch (e) { toast("Extrait impossible : vérifie la connexion Internet."); }
+    bt.disabled = false;
+  }));
+  $$("#pop-voix [data-choisir]").forEach((d) => (d.onclick = async (ev) => {
+    ev.stopPropagation();
+    await api.choisir_voix(d.dataset.choisir);
+    $("#voix-nom").textContent = v.voix.find((x) => x.id === d.dataset.choisir).nom;
+    pop.hidden = true;
+    etat.audio.chargee = null;
+    $("#audio").removeAttribute("src");
+    majAudio();
+  }));
+}
+
 // ---------- démarrage ----------
 function brancher() {
   $("#b-importer").onclick = () => ouvrirImport();
@@ -557,6 +727,7 @@ function brancher() {
   $("#imp-url").addEventListener("input", majImport);
   $("#imp-url").addEventListener("keydown", (e) => { if (e.key === "Enter") lancerImport(); });
   document.addEventListener("paste", lireCollage);
+  brancherAudio();
   $("#imp-go").onclick = lancerImport;
   $("#p-prec").onclick = () => { const p = pagesApercu(); allerPage(p[Math.max(0, p.indexOf(etat.ap.page) - 1)]); };
   $("#p-suiv").onclick = () => { const p = pagesApercu(); allerPage(p[Math.min(p.length - 1, p.indexOf(etat.ap.page) + 1)]); };
@@ -579,6 +750,19 @@ function brancher() {
     } else if (!edition && !$("#vue-apercu").hidden && (e.key === "PageDown" || e.key === "PageUp")) {
       e.preventDefault();
       (e.key === "PageDown" ? $("#p-suiv") : $("#p-prec")).click();
+    } else if (!edition && !$("#vue-lecture").hidden && $("#import").hidden && $("#a-play")) {
+      // Raccourcis du lecteur audio
+      const a = $("#audio");
+      if (e.key === " ") { e.preventDefault(); basculerLecture(); }
+      else if (e.key === "ArrowLeft" && e.ctrlKey) { e.preventDefault(); changerSection(-1, !a.paused); }
+      else if (e.key === "ArrowRight" && e.ctrlKey) { e.preventDefault(); changerSection(1, !a.paused); }
+      else if (e.key === "ArrowLeft") { e.preventDefault(); sauter(-15); }
+      else if (e.key === "ArrowRight") { e.preventDefault(); sauter(15); }
+      else if (e.key === "[" || e.key === "]") {
+        const i = VITESSES.indexOf(a.playbackRate);
+        const x = VITESSES[Math.min(VITESSES.length - 1, Math.max(0, (i < 0 ? 1 : i) + (e.key === "]" ? 1 : -1)))];
+        a.playbackRate = x; sauverReglages({ vitesse: x }); dessinerLecteur(); toast(`Vitesse ${String(x).replace(".", ",")}x`);
+      }
     }
   });
 }
@@ -590,6 +774,7 @@ async function demarrer() {
   appliquerTheme(etat.reglages.theme || "jour");
   etat.mode = etat.reglages.mode || "mixte";
   brancher();
+  api.voix().then((v) => { const x = v.voix.find((y) => y.id === v.choisie); if (x) $("#voix-nom").textContent = x.nom; });
   await chargerLivres();
   const dernier = etat.reglages.dernier_livre;
   if (dernier && etat.livres.some((l) => l.id === dernier)) await ouvrirLivre(dernier);

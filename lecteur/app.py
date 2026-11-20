@@ -1,6 +1,7 @@
 """Fenêtre de l'application (pywebview) et fonctions appelées par l'interface (ui/)."""
 from __future__ import annotations
 
+import asyncio
 import base64
 import json
 import shutil
@@ -11,13 +12,16 @@ from pathlib import Path
 import pymupdf
 import webview
 
-from . import __version__, bibliotheque, douteux
+from . import __version__, bibliotheque, douteux, serveur_audio
+from .assemblage import assembler
+from .audio import etat_audio, generer_livre
 from .importer import PROFILS, importer_pdf, lire_pages
 from .modele import Livre
 from .ocr_image import langues_disponibles
 from .profils import bible_etude, deux_colonnes, simple
 from .prononciation import a_lire, bloc_a_lire, etiquette_a_lire
 from .texte_brut import lire_page_web, livre_depuis_images, livre_depuis_texte
+from .voix import VOIX_PAR_DEFAUT, liste_des_voix, moteur_pour
 
 UI = Path(__file__).resolve().parent.parent / "ui" / "index.html"
 
@@ -27,6 +31,7 @@ class Api:
         self._fenetre: webview.Window | None = None
         self._verrou = threading.Lock()
         self._livres: dict[str, Livre] = {}
+        self._generation: dict | None = None  # création d'audio en cours
 
     # --- utilitaires -------------------------------------------------------
     def _js(self, code: str) -> None:
@@ -260,6 +265,81 @@ class Api:
         self._livres.pop(livre_id, None)
         send2trash(str(dossier))
         return True
+
+    # --- audio (phase 2) ------------------------------------------------------
+    def _voix(self) -> str:
+        return bibliotheque.reglages().get("voix") or VOIX_PAR_DEFAUT
+
+    def _dossier(self, livre_id: str) -> Path:
+        return bibliotheque.chemin_livre(livre_id).parent
+
+    def voix(self) -> dict:
+        return {"choisie": self._voix(), "voix": [v.__dict__ for v in liste_des_voix()]}
+
+    def choisir_voix(self, voix_id: str) -> bool:
+        if voix_id not in {v.id for v in liste_des_voix()}:
+            return False
+        self.enregistrer_reglages({"voix": voix_id})
+        return True
+
+    def extrait_voix(self, voix_id: str) -> str:
+        """Court extrait pour choisir la voix (gardé dans Documents\\Lecteur\\extraits)."""
+        f = bibliotheque.racine() / "extraits" / (voix_id.replace(":", "-") + ".mp3")
+        if not f.exists():
+            nom = next((v.nom for v in liste_des_voix() if v.id == voix_id), "")
+            texte = (f"Bonjour, je suis {nom}. Voici comment je lirai tes livres : "
+                     "Genèse, chapitre 1, verset 1. Au commencement, Dieu créa le ciel et la terre.")
+            mp3, _ = asyncio.run(moteur_pour(voix_id).synthetiser(texte, voix_id))
+            f.parent.mkdir(parents=True, exist_ok=True)
+            f.write_bytes(mp3)
+        return "data:audio/mpeg;base64," + base64.b64encode(f.read_bytes()).decode()
+
+    def etat_audio(self, livre_id: str) -> dict:
+        e = etat_audio(self._dossier(livre_id), self._livre(livre_id), self._voix())
+        g = self._generation
+        e["en_cours"] = bool(g and g["livre"] == livre_id and g["en_cours"])
+        e["autre_en_cours"] = bool(g and g["livre"] != livre_id and g["en_cours"])
+        e["erreurs"] = g["erreurs"] if g and g["livre"] == livre_id else []
+        e["voix"] = self._voix()
+        return e
+
+    def generer_audio(self, livre_id: str) -> dict:
+        """Lance la création de l'audio en arrière-plan (un livre à la fois). L'interface suit avec etat_audio."""
+        if self._generation and self._generation["en_cours"]:
+            return {"deja": self._generation["livre"]}
+        livre, voix, dossier = self._livre(livre_id), self._voix(), self._dossier(livre_id)
+        g = {"livre": livre_id, "en_cours": True, "arret": False, "erreurs": []}
+        self._generation = g
+
+        def travail():
+            try:
+                r = asyncio.run(generer_livre(dossier, livre, voix, moteur_pour(voix), en_parallele=3,
+                                              arret=lambda: g["arret"]))
+                g["erreurs"] = r["erreurs"]
+            except Exception as e:  # noqa: BLE001
+                g["erreurs"] = [str(e)]
+            finally:
+                g["en_cours"] = False
+
+        threading.Thread(target=travail, daemon=True).start()
+        return {"lance": livre_id}
+
+    def arreter_audio(self) -> bool:
+        if self._generation:
+            self._generation["arret"] = True
+        return True
+
+    def audio_section(self, livre_id: str, section_id: str, mode: str) -> dict:
+        """MP3 assemblé de la section (blocs + silences) et minutage de tous les mots."""
+        livre = self._livre(livre_id)
+        s = next((x for x in livre.sections if x.id == section_id), None)
+        if s is None:
+            return {"erreur": "Section introuvable."}
+        r = assembler(self._dossier(livre_id), livre, s, mode, self._voix())
+        if r is None:
+            return {"pas_pret": True}
+        return {"url": serveur_audio.adresse(r["mp3"]), "duree": r["duree"],
+                "minutage": json.loads(r["minutage"].read_text(encoding="utf-8"))}
 
 
 def lancer() -> None:

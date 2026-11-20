@@ -64,15 +64,16 @@
           <div class="seg" role="group" aria-label="Mode d'écoute" id="modes">
             <button data-mode="texte">Texte</button><button data-mode="notes">Notes</button><button data-mode="mixte">Texte + notes</button>
           </div>
-          <button class="voix" title="Voix (phase 2)" disabled>
-            <svg viewBox="0 0 24 24"><path d="M12 3v18M8 8v8M16 8v8M4 11v2M20 11v2"/></svg><b>Sylvie</b> fr-CA</button>
+          <div class="pop-ancre">
+            <button class="voix" id="b-voix" title="Choisir la voix">
+              <svg viewBox="0 0 24 24"><path d="M12 3v18M8 8v8M16 8v8M4 11v2M20 11v2"/></svg><b id="voix-nom">Sylvie</b> fr-CA</button>
+            <div class="pop" id="pop-voix" hidden role="dialog" aria-label="Choisir la voix"></div>
+          </div>
         </div>
       </div>
       <div class="zone" id="zone-lecture"><article class="page" id="page-lecture"></article></div>
-      <div class="lecteur">
-        <span class="lecteur-msg">L'audio n'est pas encore créé. Vérifie le texte dans <b>Aperçu</b>, puis la voix arrivera à la phase 2.</span>
-        <button class="prim" disabled title="Phase 2">Générer l'audio</button>
-      </div>
+      <div class="lecteur" id="barre-audio"></div>
+      <audio id="audio" preload="metadata"></audio>
     </section>
 
     <!-- Aperçu et corrections -->
