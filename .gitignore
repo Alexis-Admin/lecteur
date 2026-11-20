@@ -1,0 +1,40 @@
+# Dépôt PUBLIC : seulement du code.
+# Méthode « liste blanche » : on ignore TOUT, puis on autorise seulement les types de fichiers de code.
+# Aucun PDF, image, audio, texte biblique, commentaire ou livre importé ne doit jamais être commité.
+
+*
+!*/
+
+# Code et configuration
+!*.py
+!*.html
+!*.css
+!*.js
+!*.mjs
+!*.toml
+!*.bat
+!*.ps1
+!*.sh
+!.gitignore
+!.gitattributes
+!outils/hooks/pre-commit
+
+# Documentation publique (sans contenu de livre ni information personnelle).
+# CLAUDE.md et DESIGN.md restent sur le PC seulement (ils contiennent des chemins et des infos personnelles).
+!README.md
+!GUIDE-INSTALLATION.md
+!NOTES-DE-VERSION.md
+!requirements.txt
+
+# Jamais, même si une règle plus haut l'autorise
+.venv/
+__pycache__/
+*.pyc
+dist/
+build/
+donnees/
+bibliotheque/
+Bibliotheque/
+**/livres/**
+**/audio/**
+tests/donnees_reelles/
