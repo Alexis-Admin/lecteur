@@ -61,10 +61,15 @@ def lignes_de_mots(mots: list[Mot], W: float, H: float, numero: int, nb_colonnes
             if re.fullmatch(r"[\divxlcIVXLC\-–— ]{1,8}", txt):  # numéro de page égaré
                 continue
             taille = statistics.median(m.taille for m in ligne)
-            titre = (taille >= 1.18 * corps or all(m.gras for m in ligne)) and len(ligne) <= 16 \
-                and not re.search(r"[.,;]$", txt)
             alinea = ligne[0].x0 - x_gauche > 1.2 * corps
             ecart = precedente is not None and ligne[0].y0 - precedente["y1"] > 0.9 * corps
+            # Titre : plus gros ou en gras, MAIS aussi court, détaché du texte au-dessus, qui commence par une
+            # majuscule ou un chiffre et qui n'est ni un dialogue ni une fin de phrase. Sur les scans, la
+            # reconnaissance de texte grossit ou met en gras des lignes ordinaires (roman : 93 faux chapitres).
+            titre = ((taille >= 1.18 * corps or all(m.gras for m in ligne)) and len(ligne) <= 10
+                     and (precedente is None or ecart)
+                     and bool(re.match(r"[A-ZÀ-Ü0-9ÉÈ«\"]", txt)) and len(re.sub(r"\W", "", txt)) >= 2
+                     and not re.search(r"[.,;:!?…»]$", txt))
             courte = precedente is not None and precedente["x1"] < x_droite - 4 * corps and re.search(r"[.!?»:]$", precedente["texte"])
             sortie.append({"texte": txt, "mots": ligne, "titre": titre, "nouveau": bool(alinea or ecart or courte),
                            "y1": max(m.y1 for m in ligne), "x1": max(m.x1 for m in ligne), "page": numero})

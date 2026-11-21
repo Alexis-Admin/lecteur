@@ -37,7 +37,7 @@ L'app n'a pas besoin des droits d'administrateur.
 
 ## 4. Télécharger l'app
 
-1. Va sur la page **Releases** du dépôt GitHub de Lecteur et télécharge **`Lecteur-1.0.0.zip`**.
+1. Va sur la page **Releases** du dépôt GitHub de Lecteur et télécharge le fichier **`Lecteur-….zip`** de la version tout en haut (la plus récente, ex. `Lecteur-1.0.1.zip`).
 2. Clic droit sur le fichier → **Extraire tout…** → choisis un dossier, par exemple `Documents\Lecteur-app`.
 
 ## 5. Installer les composants

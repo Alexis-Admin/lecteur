@@ -61,8 +61,9 @@ svg { width: 15px; height: 15px; fill: none; stroke: currentColor; stroke-width:
 .lab { font-size: 10.5px; letter-spacing: .2em; text-transform: uppercase; font-weight: 600; color: var(--side-doux); padding: 10px 8px 6px; }
 .liste { display: flex; flex-direction: column; gap: 1px; }
 .side { overflow: hidden; }
-#sections { flex: 1 1 auto; min-height: 60px; overflow: auto; }
-#livres { flex: 0 1 auto; max-height: 30vh; overflow: auto; }
+/* Sections : prennent la place qui reste et défilent. Bibliothèque : jamais écrasée (93 sections d'un roman la cachaient). */
+#sections { flex: 1 1 0; min-height: 80px; overflow: auto; }
+#livres { flex: none; max-height: 30vh; overflow: auto; }
 .sec { flex: none; display: flex; align-items: center; gap: 10px; height: 32px; padding: 0 8px; border-radius: 8px; color: var(--side-t);
   background: transparent; border: none; text-align: left; width: 100%; transition: background .15s; }
 .sec:hover { background: var(--side-survol); }
@@ -166,6 +167,8 @@ body[data-theme="nuit"] .page .ph.cours { color: #FFFFFF; }
 .temps .rail { background: rgba(255,255,255,.14); cursor: pointer; height: 6px; }
 .vit { height: 30px; padding: 0 10px; border-radius: 999px; border: 1px solid rgba(255,255,255,.2); background: transparent; color: inherit; font-family: "JetBrains Mono", monospace; font-size: 13px; }
 .vit option { color: #1E2433; }
+.vit-g { display: flex; align-items: center; gap: 4px; }
+.vit-g .vit { padding: 0 6px; min-width: 66px; text-align: center; }
 .pop-ancre { position: relative; }
 .pop { position: absolute; right: 0; top: calc(100% + 6px); z-index: 15; width: 300px; background: var(--carte); border: 1px solid var(--filet); border-radius: 14px;
   box-shadow: 0 14px 40px rgba(0,0,0,.22); padding: 8px; display: flex; flex-direction: column; gap: 2px; }
@@ -231,7 +234,47 @@ body[data-theme="nuit"] .page .ph.cours { color: #FFFFFF; }
 .pil:hover { border-color: var(--texte); } .pil.ok { background: var(--prim); color: var(--prim-t); border-color: var(--prim); }
 .acts input { height: 28px; border-radius: 999px; border: 1px solid var(--filet); background: var(--carte); color: var(--texte); padding: 0 10px; font: inherit; font-size: 12.5px; width: 130px; }
 .case { display: flex; gap: 8px; align-items: center; font-size: 12.5px; color: var(--texte2); }
-.auto-bloc { border-top: 1px solid var(--filet); padding-top: 10px; display: flex; flex-direction: column; gap: 8px; }
+.auto-bloc { border-top: 1px solid var(--filet); padding-top: 10px; }
+.auto-bloc summary { cursor: pointer; list-style: none; display: flex; align-items: center; gap: 6px; }
+.auto-bloc summary::-webkit-details-marker { display: none; }
+.auto-bloc summary::before { content: "›"; color: var(--texte2); transition: transform .15s; display: inline-block; }
+.auto-bloc[open] summary::before { transform: rotate(90deg); }
+.auto-bloc .aide { margin: 8px 0; }
+.auto-g { display: flex; flex-direction: column; gap: 4px; padding: 8px 0; border-top: 1px dashed var(--filet); }
+.auto-titre { font-size: 12px; font-weight: 600; color: var(--texte); display: flex; justify-content: space-between; }
+.auto-titre .mono { color: var(--texte2); font-weight: 400; }
+.auto-l [data-page] { cursor: pointer; }
+/* Révision : progression, groupes, changements sûrs à cocher */
+.c-verif .tete { display: flex; align-items: baseline; justify-content: space-between; }
+.rev-etat { font-size: 12px; color: var(--texte2); }
+.rev-barre { height: 4px; border-radius: 999px; background: var(--filet); overflow: hidden; margin: -4px 0 2px; }
+.rev-barre i { display: block; height: 100%; background: var(--auto); border-radius: 999px; transition: width .3s; }
+.rev-groupe { display: flex; flex-direction: column; gap: 8px; }
+.rev-groupe + .rev-groupe { border-top: 1px solid var(--filet); padding-top: 12px; margin-top: 4px; }
+.rev-tete { display: flex; align-items: center; justify-content: space-between; gap: 8px; }
+.rev-tete .lab-c { letter-spacing: .12em; white-space: nowrap; }
+.rev-tete .lien { white-space: nowrap; font-size: 12px; }
+.rev-choix { font-size: 11.5px; color: var(--texte2); margin-right: 2px; }
+.vit-pas { width: 30px; height: 30px; border-radius: 999px; font-size: 18px; font-weight: 500; }
+.aide { font-size: 12px; line-height: 1.45; color: var(--texte2); margin: 0; }
+.rev-sur { background: var(--fond); border: 1px solid var(--filet); border-radius: 12px; padding: 10px; }
+.ch { display: flex; gap: 9px; align-items: flex-start; padding: 7px 8px; border-radius: 9px; background: var(--carte); border: 1px solid var(--filet); cursor: pointer; }
+.ch:has(input:not(:checked)) { opacity: .55; }
+.ch input { margin-top: 3px; accent-color: var(--auto); width: 15px; height: 15px; flex: none; }
+.ch-corps { display: flex; flex-direction: column; gap: 3px; min-width: 0; flex: 1; }
+.ch-l { display: flex; align-items: baseline; gap: 6px; flex-wrap: wrap; font-size: 13.5px; }
+.ch-l .av { color: var(--texte2); text-decoration: line-through; }
+.ch-l .ap { color: var(--auto); font-weight: 600; }
+.ch-l .fl { color: var(--texte2); }
+.ch-l .ou { margin-left: auto; white-space: nowrap; font-size: 11.5px; color: var(--texte2); text-decoration: underline dotted; cursor: pointer; }
+.ch-ctx { font-family: Newsreader, Georgia, serif; font-size: 12.5px; color: var(--texte2); line-height: 1.35; }
+.ch-ctx b { font-weight: 600; color: var(--texte); }
+.rev-sur .prim, .rev-suite { width: 100%; justify-content: center; }
+.memo-l { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 6px; }
+.memo { display: inline-flex; align-items: center; gap: 5px; font-size: 12.5px; padding: 2px 4px 2px 10px; border: 1px solid var(--filet); border-radius: 999px; }
+.memo .av { color: var(--texte2); }
+.memo button { border: 0; background: none; color: var(--texte2); width: 20px; height: 20px; border-radius: 999px; cursor: pointer; }
+.memo button:hover { background: var(--douteux); color: var(--douteux-t); }
 .lab-c { font-size: 10.5px; letter-spacing: .2em; text-transform: uppercase; font-weight: 600; color: var(--texte2); }
 .auto-l { display: grid; grid-template-columns: minmax(0,1fr) auto minmax(0,1fr); gap: 3px 8px; font-size: 12px; align-items: center; }
 .auto-l .av { font-family: "JetBrains Mono", monospace; color: var(--texte2); text-decoration: line-through; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }

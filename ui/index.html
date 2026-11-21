@@ -90,7 +90,7 @@
         </div>
         <div class="etapes" aria-label="Étapes">
           <span class="et fait"><span class="r">✓</span>Zones</span>
-          <span class="et actif"><span class="r">2</span>Texte</span>
+          <span class="et actif" id="et-texte"><span class="r">2</span>Texte</span>
           <button class="et et-bouton" id="b-etape-voix" title="Le texte est vérifié : créer l'audio"><span class="r">3</span>Créer l'audio ›</button>
         </div>
       </header>
@@ -122,14 +122,15 @@
         </section>
 
         <aside class="carte c-verif" aria-label="Corrections">
-          <div class="tete"><h3>À vérifier <span class="compte mono" id="nb-douteux">0</span></h3></div>
+          <div class="tete"><h3>Révision</h3><span class="rev-etat mono" id="rev-etat"></span></div>
+          <div class="rev-barre" aria-hidden="true"><i id="rev-barre"></i></div>
           <div id="liste-douteux" class="liste-douteux"></div>
-          <label class="case"><input type="checkbox" id="retenir" checked> Retenir mes corrections pour les prochains livres</label>
-          <div class="auto-bloc">
-            <span class="lab-c" id="lab-auto">Corrigé automatiquement</span>
-            <div class="auto-l" id="liste-auto"></div>
-            <button class="lien" id="b-plus-auto" hidden>Voir tout</button>
-          </div>
+          <label class="case" title="Une correction retenue sera faite toute seule dans tes prochains livres. Tu peux l'oublier dans ⚙ Réglages."><input type="checkbox" id="retenir" checked> Retenir mes corrections pour les prochains livres</label>
+          <details class="auto-bloc" id="auto-bloc">
+            <summary><span class="lab-c" id="lab-auto">Déjà corrigé automatiquement</span></summary>
+            <p class="aide">Rien à faire ici : c'est la liste de ce que Lecteur a réparé seul. Clique sur une ligne pour voir la page ; dans le texte, ces mots sont soulignés en vert.</p>
+            <div id="liste-auto"></div>
+          </details>
         </aside>
       </div>
     </section>

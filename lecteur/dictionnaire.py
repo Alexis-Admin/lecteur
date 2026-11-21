@@ -60,6 +60,11 @@ def connu(mot: str, ignores: frozenset[str] | set[str] = frozenset()) -> bool:
     return _dans_dico(m)
 
 
+def frequence(mot: str) -> int:
+    """Fréquence d'un mot dans le dictionnaire (0 s'il est absent)."""
+    return _verif().word_frequency[mot.lower()]
+
+
 def suggestions(mot: str, maximum: int = 3) -> list[str]:
     m = mot.lower()
     try:

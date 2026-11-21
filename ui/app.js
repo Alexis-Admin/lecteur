@@ -139,6 +139,8 @@ function dessinerSections() {
       <span class="n mono">${ecoutees.has(s.id) ? coche : String(i + 1).padStart(2, "0")}</span>
       <span class="t">${echap(s.ref ? s.ref + " · " + s.titre : s.titre)}</span></button>`).join("");
   $$("#sections .sec").forEach((b) => (b.onclick = () => choisirSection(b.dataset.id)));
+  const actif = $("#sections .sec.actif");
+  if (actif) actif.scrollIntoView({ block: "nearest" });  // la section en cours reste visible (livres de 50+ sections)
 }
 
 function choisirSection(id) {
@@ -217,8 +219,10 @@ async function ouvrirApercu() {
 }
 
 async function chargerDouteux() {
-  $("#liste-douteux").innerHTML = `<div class="chargement">Recherche des mots douteux…</div>`;
+  $("#liste-douteux").innerHTML = `<div class="chargement">Recherche des mots à vérifier…</div>`;
   etat.ap.douteux = await api.douteux(etat.livre.id);
+  etat.ap.total0 = etat.ap.douteux.length;
+  etat.ap.decoches = new Set();
   dessinerDouteux();
 }
 
@@ -331,35 +335,111 @@ async function dessinerTexte() {
   }, { once: true }));
 }
 
+// Panneau « Révision » : 1. changements sûrs (cochés d'office, un seul bouton) ;
+// 2. à décider (un choix par mot) ; 3. déjà corrigé automatiquement (pour information, replié).
+const RAISONS = {
+  "inconnu (début de phrase)": "nom ou mot inconnu",
+  "mot inconnu du dictionnaire": "absent du dictionnaire",
+  "chiffres et lettres mélangés": "chiffres et lettres mélangés",
+  "majuscule au milieu du mot": "majuscule au milieu du mot",
+};
+
+function lieu(ex) {
+  return `data-page="${ex.page || ""}" data-section="${ex.section || ""}" data-piste="${ex.piste || ""}"`;
+}
+
+function allerA(el) {
+  if (el.dataset.piste && aDesNotes(etat.livre)) choisirPiste(el.dataset.piste, false);
+  if (sansPages()) allerPage(etat.livre.sections.findIndex((s) => s.id === el.dataset.section) + 1 || 1);
+  else if (el.dataset.page) allerPage(Number(el.dataset.page));
+}
+
 function dessinerDouteux() {
   const liste = etat.ap.douteux;
-  $("#nb-douteux").textContent = liste.length;
+  const total = Math.max(etat.ap.total0 || 0, liste.length);
+  const regles = total - liste.length;
+  $("#rev-etat").textContent = total ? `${regles} sur ${total} réglé${regles > 1 ? "s" : ""}` : "";
+  $("#rev-barre").style.width = total ? `${(regles / total) * 100}%` : "100%";
+  const fini = !liste.length;
+  $("#et-texte").classList.toggle("fait", fini);
+  $("#et-texte .r").textContent = fini ? "✓" : "2";
   const zone = $("#liste-douteux");
-  if (!liste.length) {
-    zone.innerHTML = `<div class="tout-bon"><svg viewBox="0 0 24 24"><path d="M5 12l5 5 9-10"/></svg>Rien à vérifier dans ce livre.</div>`;
+  if (fini) {
+    zone.innerHTML = `<div class="tout-bon"><svg viewBox="0 0 24 24"><path d="M5 12l5 5 9-10"/></svg><span>Tout est vérifié.<br><small>Tu peux encore modifier le texte au milieu.</small></span></div>
+      <button class="prim rev-suite" id="rev-suite">${echap($("#b-etape-voix").lastChild.textContent.replace("›", "").trim() || "Créer l'audio")} ›</button>`;
+    $("#rev-suite").onclick = () => $("#b-etape-voix").click();
     return;
   }
-  zone.innerHTML = liste.slice(0, 80).map((d, i) => {
-    const ex = d.exemples[0] || {};
-    const sug = d.suggestions.map((s, k) => `<button class="pil ${k === 0 ? "ok" : ""}" data-i="${i}" data-rempl="${echap(s)}">${echap(s)}</button>`).join("");
-    return `<div class="item" data-i="${i}">
-      <span class="ctx" data-page="${ex.page || ""}" data-section="${ex.section || ""}" data-piste="${ex.piste || ""}" title="Aller à cet endroit">${echap(ex.avant)}<b>${echap(d.mot)}</b>${echap(ex.apres)}</span>
-      <span class="meta">${d.nb} fois${ex.page ? " · p. " + ex.page : ""} · ${echap(d.raison)}</span>
-      <div class="acts">${sug}<button class="pil" data-corriger="${i}">Corriger…</button><button class="pil" data-garder="${i}" title="Le mot est bon : ne plus le signaler">Garder</button></div>
-    </div>`;
-  }).join("") + (liste.length > 80 ? `<p class="petit">… et ${liste.length - 80} autres. Corrige ceux-ci d'abord.</p>` : "");
+  const surs = liste.map((d, i) => ({ d, i })).filter((x) => x.d.sur && x.d.suggestions.length);
+  const autres = liste.map((d, i) => ({ d, i })).filter((x) => !(x.d.sur && x.d.suggestions.length));
+  const coches = surs.filter((x) => !etat.ap.decoches.has(x.d.mot)).length;
+  let html = "";
+  if (surs.length) {
+    html += `<section class="rev-groupe rev-sur">
+      <div class="rev-tete"><span class="lab-c">Changements sûrs · ${surs.length}</span>
+        <button class="lien" id="rev-bascule">${coches ? "Tout décocher" : "Tout cocher"}</button></div>
+      <p class="aide">Des erreurs de scan évidentes (accent manquant, lettre mal lue, « à » collé). Décoche ce qui ne te convient pas.</p>
+      ${surs.map(({ d, i }) => {
+        const ex = d.exemples[0] || {};
+        return `<label class="ch">
+          <input type="checkbox" data-sur="${echap(d.mot)}" ${etat.ap.decoches.has(d.mot) ? "" : "checked"}>
+          <span class="ch-corps">
+            <span class="ch-l"><span class="av">${echap(d.mot)}</span><span class="fl">›</span><span class="ap">${echap(d.suggestions[0])}</span>
+              <span class="ou" ${lieu(ex)} title="Voir dans la page">${ex.page ? "p. " + ex.page : "voir"}${d.nb > 1 ? " · " + d.nb + " fois" : ""}</span></span>
+            <span class="ch-ctx">${ex.avant.length > 34 ? "…" : ""}${echap(ex.avant.slice(-34))}<b>${echap(d.mot)}</b>${echap(ex.apres.slice(0, 34))}${ex.apres.length > 34 ? "…" : ""}</span>
+          </span></label>`;
+      }).join("")}
+      <button class="prim" id="rev-appliquer" ${coches ? "" : "disabled"}>Appliquer ${coches > 1 ? "les " + coches + " changements" : coches ? "ce changement" : ""}</button>
+    </section>`;
+  }
+  if (autres.length) {
+    html += `<section class="rev-groupe">
+      <div class="rev-tete"><span class="lab-c">À décider · ${autres.length}</span></div>
+      <p class="aide">Clique sur la bonne forme. Si le mot est déjà bon (un nom propre, par exemple), choisis « C'est bon ».</p>
+      ${autres.slice(0, 80).map(({ d, i }) => {
+        const ex = d.exemples[0] || {};
+        const sug = (d.suggestions.length ? '<span class="rev-choix">Remplacer par</span>' : "") + d.suggestions.map((s) => `<button class="pil" data-i="${i}" data-rempl="${echap(s)}" title="Remplacer « ${echap(d.mot)} » par « ${echap(s)} » partout">${echap(s)}</button>`).join("");
+        return `<div class="item" data-i="${i}">
+          <span class="ctx" ${lieu(ex)} title="Voir dans la page">${echap(ex.avant)}<b>${echap(d.mot)}</b>${echap(ex.apres)}</span>
+          <span class="meta">${ex.page ? "p. " + ex.page + " · " : ""}${d.nb > 1 ? d.nb + " fois · " : ""}${echap(RAISONS[d.raison] || d.raison)}</span>
+          ${sug ? `<div class="acts">${sug}</div>` : ""}
+          <div class="acts"><button class="pil" data-garder="${i}" title="Le mot est correct : le garder tel quel et ne plus le signaler">C'est bon</button><button class="pil" data-corriger="${i}" title="Taper la bonne forme moi-même">Écrire…</button></div>
+        </div>`;
+      }).join("")}
+      ${autres.length > 80 ? `<p class="petit">… et ${autres.length - 80} autres. Règle ceux-ci d'abord.</p>` : ""}
+    </section>`;
+  }
+  zone.innerHTML = html;
 
-  $$("#liste-douteux .ctx").forEach((el) => (el.onclick = () => {
-    if (el.dataset.piste && aDesNotes(etat.livre)) choisirPiste(el.dataset.piste, false);
-    if (sansPages()) allerPage(etat.livre.sections.findIndex((s) => s.id === el.dataset.section) + 1 || 1);
-    else if (el.dataset.page) allerPage(Number(el.dataset.page));
+  $$("#liste-douteux .ctx, #liste-douteux .ou").forEach((el) => (el.onclick = (e) => { e.preventDefault(); allerA(el); }));
+  $$("#liste-douteux [data-sur]").forEach((el) => (el.onchange = () => {
+    if (el.checked) etat.ap.decoches.delete(el.dataset.sur); else etat.ap.decoches.add(el.dataset.sur);
+    dessinerDouteux();
   }));
+  const bascule = $("#rev-bascule");
+  if (bascule) bascule.onclick = () => {
+    if (coches) surs.forEach((x) => etat.ap.decoches.add(x.d.mot)); else etat.ap.decoches.clear();
+    dessinerDouteux();
+  };
+  const appliquer = $("#rev-appliquer");
+  if (appliquer) appliquer.onclick = async () => {
+    appliquer.disabled = true;
+    const paires = surs.filter((x) => !etat.ap.decoches.has(x.d.mot)).map((x) => [x.d.mot, x.d.suggestions[0]]);
+    const retenir = $("#retenir").checked;
+    const n = await api.remplacer_plusieurs(etat.livre.id, paires, retenir);
+    const faits = new Set(paires.map((p) => p[0]));
+    await rechargerLivre();
+    etat.ap.douteux = etat.ap.douteux.filter((d) => !faits.has(d.mot));
+    dessinerDouteux(); dessinerTexte(); dessinerSections();
+    toast(`${paires.length} changement${paires.length > 1 ? "s" : ""} appliqué${paires.length > 1 ? "s" : ""} (${n} endroit${n > 1 ? "s" : ""})${retenir ? " · retenus pour les prochains livres" : ""}.`);
+  };
   $$("#liste-douteux [data-rempl]").forEach((el) => (el.onclick = () => remplacer(liste[el.dataset.i].mot, el.dataset.rempl)));
   $$("#liste-douteux [data-garder]").forEach((el) => (el.onclick = async () => {
-    await api.ignorer(liste[el.dataset.garder].mot);
-    etat.ap.douteux.splice(Number(el.dataset.garder), 1);
+    const mot = liste[el.dataset.garder].mot;
+    await api.ignorer(mot);
+    etat.ap.douteux = etat.ap.douteux.filter((d) => d.mot !== mot);
     dessinerDouteux(); dessinerTexte();
-    toast("Mot gardé : il ne sera plus signalé.");
+    toast(`« ${mot} » gardé tel quel : il ne sera plus signalé.`);
   }));
   $$("#liste-douteux [data-corriger]").forEach((el) => (el.onclick = () => {
     const i = Number(el.dataset.corriger), d = liste[i];
@@ -374,28 +454,48 @@ function dessinerDouteux() {
   }));
 }
 
+async function rechargerLivre() {
+  etat.livre = await api.livre(etat.livre.id);
+  etat.section = etat.livre.sections.find((s) => etat.section && s.id === etat.section.id) || etat.livre.sections[0];
+}
+
 async function remplacer(avant, apres) {
   const retenir = $("#retenir").checked;
   const n = await api.remplacer(etat.livre.id, avant, apres, retenir);
-  etat.livre = await api.livre(etat.livre.id);
-  etat.section = etat.livre.sections.find((s) => etat.section && s.id === etat.section.id) || etat.livre.sections[0];
+  await rechargerLivre();
   etat.ap.douteux = etat.ap.douteux.filter((d) => d.mot !== avant);
   dessinerDouteux(); dessinerTexte(); dessinerSections();
   toast(`« ${avant} » → « ${apres} » : ${n} remplacement${n > 1 ? "s" : ""}${retenir ? " · retenu pour les prochains livres" : ""}.`);
 }
 
+// Corrections automatiques, regroupées par sorte.
+function sorteAuto(c) {
+  if (/\S- \S/.test(c.avant)) return "Mots coupés recollés";
+  if (/^\*?(II|11|Il|il|lI|1l)$/.test(c.avant.replace(/^\*/, "")) && /^[Ii]l$/.test(c.apres)) return "« II » lu comme « Il »";
+  if (c.apres === "∅" || c.apres.replace(/[^\wÀ-ÿ]/g, "") === c.avant.replace(/[^\wÀ-ÿ]/g, "")) return "Taches et signes parasites retirés";
+  if (/\d/.test(c.apres)) return "Références bibliques";
+  return "Lettres corrigées";
+}
+
 function dessinerAuto() {
-  const vus = new Map();
+  const groupes = new Map();
+  let total = 0;
   for (const c of etat.livre.corrections) {
     if (c.apres === "∅" && c.avant.length <= 1) continue;
+    total++;
+    const g = sorteAuto(c);
+    if (!groupes.has(g)) groupes.set(g, new Map());
     const cle = c.avant + "→" + c.apres;
-    vus.set(cle, { ...c, nb: (vus.get(cle)?.nb || 0) + 1 });
+    const m = groupes.get(g);
+    m.set(cle, { ...c, nb: (m.get(cle)?.nb || 0) + 1 });
   }
-  const liste = [...vus.values()];
-  $("#lab-auto").textContent = `Corrigé automatiquement · ${etat.livre.corrections.length}`;
-  const montres = etat.ap.autoTout ? liste : liste.slice(0, 10);
-  $("#liste-auto").innerHTML = montres.map((c) => `<span class="av" title="${echap(c.avant)} (p. ${c.page})">${echap(c.avant)}</span><span class="fl">›</span><span class="ap" title="${c.nb} fois">${echap(c.apres === "∅" ? "(retiré)" : c.apres)}</span>`).join("");
-  $("#b-plus-auto").hidden = liste.length <= 10 || etat.ap.autoTout;
+  $("#lab-auto").textContent = `Déjà corrigé automatiquement · ${total}`;
+  $("#auto-bloc").hidden = !total;
+  $("#liste-auto").innerHTML = [...groupes.entries()].map(([g, m]) => `<div class="auto-g">
+      <span class="auto-titre">${echap(g)} <span class="mono">${[...m.values()].reduce((t, c) => t + c.nb, 0)}</span></span>
+      <div class="auto-l">${[...m.values()].map((c) => `<span class="av" data-page="${c.page || ""}" title="Voir la page ${c.page}">${echap(c.avant)}</span><span class="fl">›</span><span class="ap" data-page="${c.page || ""}" title="p. ${c.page}${c.nb > 1 ? " · " + c.nb + " fois" : ""}">${echap(c.apres === "∅" ? "(retiré)" : c.apres)}</span>`).join("")}</div>
+    </div>`).join("");
+  $$("#liste-auto [data-page]").forEach((el) => (el.onclick = () => { if (el.dataset.page && !sansPages()) allerPage(Number(el.dataset.page)); }));
 }
 
 function choisirPiste(piste, redessiner = true) {
@@ -577,6 +677,18 @@ const ICONES = {
 };
 etat.audio = { e: null, minuterie: null, debut: null, chargee: null, voix: null };
 const VITESSES = [0.75, 1, 1.1, 1.25, 1.5, 1.75, 2, 2.5, 3];
+const VIT_MIN = 0.75, VIT_MAX = 3, VIT_PAS = 0.05;
+function vitTexte(x) { return x.toLocaleString("fr-CA", { minimumFractionDigits: x % 1 ? 2 : 0, maximumFractionDigits: 2 }).replace(/(,\d)0$/, "$1") + "x"; }
+
+// Vitesse par pas de 0,05x (Alexis : de 1,25x à 1,5x, l'écart était trop grand).
+function regleVitesse(x) {
+  x = Math.round(Math.min(VIT_MAX, Math.max(VIT_MIN, x)) * 100) / 100;
+  const a = $("#audio");
+  a.playbackRate = x;
+  sauverReglages({ vitesse: x });
+  dessinerLecteur();
+  return x;
+}
 const fmt = (s) => { s = Math.max(0, Math.floor(s || 0)); const h = Math.floor(s / 3600), m = Math.floor((s % 3600) / 60), x = s % 60;
   return (h ? h + ":" + String(m).padStart(2, "0") : String(m).padStart(2, "0")) + ":" + String(x).padStart(2, "0"); };
 
@@ -645,14 +757,20 @@ function dessinerLecteur() {
     </div>
     <div class="temps"><div class="l1"><span class="mono" id="a-t">${fmt(a.currentTime)}</span><span>${i < l.sections.length - 1 ? "Suivante : " + echap(l.sections[i + 1].ref || l.sections[i + 1].titre) : "Fin du livre"}</span><span class="mono" id="a-reste">−${fmt((a.duration || 0) - a.currentTime)}</span></div>
       <div class="rail" id="a-rail" title="Cliquer pour aller à cet endroit"><i id="a-barre" style="width:${a.duration ? (a.currentTime / a.duration) * 100 : 0}%"></i></div></div>
-    <select class="vit" id="a-vit" aria-label="Vitesse de lecture" title="Vitesse : 0,75x à 3x ([ et ])">
-      ${VITESSES.map((x) => `<option value="${x}" ${x === v ? "selected" : ""}>${String(x).replace(".", ",")}x</option>`).join("")}</select>`;
+    <div class="vit-g" role="group" aria-label="Vitesse de lecture">
+      <button class="cb vit-pas" id="a-vit-moins" aria-label="Moins vite" title="Moins vite : −0,05x ([)" ${v <= VIT_MIN ? "disabled" : ""}>−</button>
+      <select class="vit" id="a-vit" aria-label="Vitesse de lecture" title="Vitesse : 0,75x à 3x. − et + changent de 0,05x ([ et ])">
+        ${[...new Set([...VITESSES, v])].sort((x, y) => x - y).map((x) => `<option value="${x}" ${x === v ? "selected" : ""}>${vitTexte(x)}</option>`).join("")}</select>
+      <button class="cb vit-pas" id="a-vit-plus" aria-label="Plus vite" title="Plus vite : +0,05x (])" ${v >= VIT_MAX ? "disabled" : ""}>+</button>
+    </div>`;
   $("#a-play").onclick = basculerLecture;
   $("#a-moins").onclick = () => sauter(-15);
   $("#a-plus").onclick = () => sauter(15);
   $("#a-prec").onclick = () => changerSection(-1, !a.paused);
   $("#a-suiv").onclick = () => changerSection(1, !a.paused);
-  $("#a-vit").onchange = (ev) => { const x = Number(ev.target.value); a.playbackRate = x; sauverReglages({ vitesse: x }); };
+  $("#a-vit").onchange = (ev) => regleVitesse(Number(ev.target.value));
+  $("#a-vit-moins").onclick = () => regleVitesse((etat.reglages.vitesse || 1) - VIT_PAS);
+  $("#a-vit-plus").onclick = () => regleVitesse((etat.reglages.vitesse || 1) + VIT_PAS);
   $("#a-rail").onclick = (ev) => { const r = ev.currentTarget.getBoundingClientRect(); if (a.duration) a.currentTime = ((ev.clientX - r.left) / r.width) * a.duration; };
 }
 
@@ -665,6 +783,9 @@ async function chargerAudioSection(jouer = false) {
     const r = await api.audio_section(l.id, s.id, mode);
     if (!r.url) { if (r.erreur) toast(r.erreur); return false; }
     etat.audio.chargee = cle;
+    // La section suivante est préparée pendant l'écoute : on y passe sans attendre.
+    const suiv = l.sections[l.sections.indexOf(s) + 1];
+    if (suiv) api.preparer_section(l.id, suiv.id, mode);
     preparerMinutage(r.minutage);
     a.src = r.url;
     a.playbackRate = etat.reglages.vitesse || 1;
@@ -981,7 +1102,7 @@ function dessinerExport() {
       <div class="liens-cle" style="margin-top:6px"><button class="lien" id="exp-actu">Actualiser</button><button class="lien" id="exp-dossier">Choisir un dossier…</button></div></div>
     ${segMode}
     <div><span class="lab-c">Vitesse dans les MP3</span><div class="seg" id="exp-vit" style="width:max-content;margin-top:6px">
-      ${VIT_EXPORT.map((v) => `<button data-v="${v}" class="${v === etat.exp.vitesse ? "on" : ""}">${String(v).replace(".", ",")}x</button>`).join("")}</div>
+      ${[...new Set([...VIT_EXPORT, etat.reglages.vitesse || 1, etat.exp.vitesse])].sort((x, y) => x - y).map((v) => `<button data-v="${v}" class="${v === etat.exp.vitesse ? "on" : ""}" ${v === (etat.reglages.vitesse || 1) ? 'title="Ta vitesse d\'écoute actuelle"' : ""}>${vitTexte(v)}</button>`).join("")}</div>
       <p class="petit" style="margin:4px 0 0">La radio de l'auto ne peut pas accélérer : la vitesse est intégrée aux fichiers, sans changer la voix.</p></div>
     ${manque}${tropPetit}
     <div class="liste-f" aria-label="Fichiers qui seront copiés">${fich}</div>
@@ -1050,7 +1171,7 @@ function dessinerCopie() {
 
 // ---------- réglages (phase 4) ----------
 const RACCOURCIS = [["Espace", "Lecture / pause"], ["← / →", "Reculer / avancer de 15 s"], ["Ctrl + ← / →", "Section précédente / suivante"],
-  ["[ / ]", "Moins vite / plus vite"], ["Clic sur une phrase", "Lire à partir de cette phrase"], ["Ctrl + O", "Importer un livre"],
+  ["[ / ]", "Moins vite / plus vite (par 0,05x)"], ["Clic sur une phrase", "Lire à partir de cette phrase"], ["Ctrl + O", "Importer un livre"],
   ["Ctrl + V", "Coller une capture, une adresse web ou un texte"], ["Ctrl + J", "Mode jour / nuit"], ["PgPréc / PgSuiv", "Page précédente / suivante (aperçu)"],
   ["Ctrl + ,", "Réglages"], ["Échap", "Fermer"]];
 
@@ -1067,11 +1188,20 @@ async function ouvrirReglages() {
       <span class="petit">Livres, audio, corrections apprises et réglages. Ils restent là si tu réinstalles l'app.</span></div>
     <div class="reg"><div class="reg-l1"><b>Ménage de l'audio</b><button class="pil" id="reg-menage" ${r.menage.fichiers ? "" : "disabled"}>Mettre à la corbeille</button></div>
       <span class="petit">${menage} (anciennes versions après une correction ou un changement de voix).</span></div>
+    <div class="reg"><b>Corrections retenues · ${Object.keys(r.apprises).length}</b>
+      <span class="petit">Faites toutes seules dans tes prochains livres. ✕ = oublier.</span>
+      <div class="memo-l">${Object.entries(r.apprises).map(([a, b]) => `<span class="memo"><span class="av">${echap(a)}</span> › <b>${echap(b)}</b><button data-oublier-c="${echap(a)}" title="Oublier cette correction">✕</button></span>`).join("") || '<span class="petit">Aucune.</span>'}</div></div>
+    <div class="reg"><b>Mots gardés tels quels · ${r.ignores.length}</b>
+      <span class="petit">Jamais signalés « à vérifier ». ✕ = les signaler de nouveau.</span>
+      <div class="memo-l">${r.ignores.map((m) => `<span class="memo">${echap(m)}<button data-oublier-m="${echap(m)}" title="Le signaler de nouveau">✕</button></span>`).join("") || '<span class="petit">Aucun.</span>'}</div></div>
     ${l ? `<div class="reg"><div class="reg-l1"><b>Livre ouvert : ${echap(l.titre)}</b><button class="pil" id="reg-suppr">Mettre ce livre à la corbeille</button></div>
       <span class="petit">Le livre, son audio et ses corrections vont dans la corbeille Windows (récupérables). Ton PDF d'origine n'est jamais touché.</span></div>` : ""}
     <div class="reg"><b>Raccourcis clavier</b><div class="raccourcis" style="margin-top:6px">${RACCOURCIS.map(([k, v]) => `<kbd>${k}</kbd><span>${v}</span>`).join("")}</div></div>`;
   $("#reglages").hidden = false;
   $("#reg-donnees").onclick = () => api.ouvrir_donnees();
+  const apresOubli = async () => { await ouvrirReglages(); if (etat.livre && !$("#vue-apercu").hidden) chargerDouteux(); };
+  $$("#reg-corps [data-oublier-c]").forEach((b) => (b.onclick = async () => { await api.oublier(b.dataset.oublierC, ""); toast(`Correction « ${b.dataset.oublierC} » oubliée.`); apresOubli(); }));
+  $$("#reg-corps [data-oublier-m]").forEach((b) => (b.onclick = async () => { await api.oublier("", b.dataset.oublierM); toast(`« ${b.dataset.oublierM} » sera de nouveau signalé.`); apresOubli(); }));
   $("#reg-menage").onclick = async () => {
     const x = await api.faire_menage();
     toast(`${x.fichiers} fichiers mis à la corbeille (${mo(x.octets)} libérés).`);
@@ -1133,7 +1263,6 @@ function brancher() {
   $("#imp-go").onclick = lancerImport;
   $("#p-prec").onclick = () => { const p = pagesApercu(); allerPage(p[Math.max(0, p.indexOf(etat.ap.page) - 1)]); };
   $("#p-suiv").onclick = () => { const p = pagesApercu(); allerPage(p[Math.min(p.length - 1, p.indexOf(etat.ap.page) + 1)]); };
-  $("#b-plus-auto").onclick = () => { etat.ap.autoTout = true; dessinerAuto(); };
   $("#b-lu").onclick = () => {
     etat.ap.lu = !etat.ap.lu;
     $("#b-lu").setAttribute("aria-pressed", String(etat.ap.lu));
@@ -1170,9 +1299,8 @@ function brancher() {
       else if (e.key === "ArrowLeft") { e.preventDefault(); sauter(-15); }
       else if (e.key === "ArrowRight") { e.preventDefault(); sauter(15); }
       else if (e.key === "[" || e.key === "]") {
-        const i = VITESSES.indexOf(a.playbackRate);
-        const x = VITESSES[Math.min(VITESSES.length - 1, Math.max(0, (i < 0 ? 1 : i) + (e.key === "]" ? 1 : -1)))];
-        a.playbackRate = x; sauverReglages({ vitesse: x }); dessinerLecteur(); toast(`Vitesse ${String(x).replace(".", ",")}x`);
+        const x = regleVitesse((etat.reglages.vitesse || 1) + (e.key === "]" ? VIT_PAS : -VIT_PAS));
+        toast(`Vitesse ${vitTexte(x)}`);
       }
     }
   });

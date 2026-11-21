@@ -1,8 +1,10 @@
 """Repère les mots douteux (probables erreurs d'OCR) pour l'aperçu."""
 from __future__ import annotations
 
+import difflib
 import re
-from collections import defaultdict
+import unicodedata
+from collections import Counter, defaultdict
 
 from .dictionnaire import ABREVIATIONS, connu, sans_elision, suggestions
 from .modele import Livre
@@ -47,16 +49,75 @@ def raison(mot: str, ignores: set[str], debut_phrase: bool = False, noms: set[st
     return None
 
 
-def _noms_propres(livre: Livre) -> set[str]:
-    """Mots à majuscule rencontrés au milieu d'une phrase : ce sont des noms (Abram, Kénan…)."""
-    noms: set[str] = set()
+def _noms_propres(livre: Livre) -> Counter:
+    """Mots à majuscule rencontrés au milieu d'une phrase : ce sont des noms (Abram, Kénan…), avec leur nombre."""
+    noms: Counter = Counter()
     for s in livre.sections:
         for b in s.blocs:
             for m in _RE_MOT.finditer(b.texte):
                 coeur = sans_elision(m.group(0).replace("’", "'"))
                 if coeur[:1].isupper() and not _RE_DEBUT_PHRASE.search(b.texte[: m.start()]):
-                    noms.add(coeur)
+                    noms[coeur] += 1
     return noms
+
+
+def _sans_accents(mot: str) -> str:
+    return "".join(c for c in unicodedata.normalize("NFD", mot) if not unicodedata.combining(c)).lower()
+
+
+def propositions(mot: str, raison_: str, noms: Counter, ignores: set[str]) -> tuple[list[str], bool]:
+    """Corrections proposées pour un mot douteux, et si la première est sûre (cochée d'office).
+
+    Sûre = seulement un accent qui manque (« Etreint » → « Étreint »), un « à » collé (« Hénocà » → « Hénoc à »),
+    ou une seule lettre de différence avec un mot fréquent bien plus probable que les autres (« ouand » → « quand »).
+    """
+    if not raison_.startswith(("mot inconnu", "inconnu")):
+        return [], False
+    m = mot.replace("’", "'")
+    coeur = sans_elision(m)
+    prefixe = m[: len(m) - len(coeur)]  # « D' », « l' »… à remettre devant la proposition
+    props: list[str] = []
+    sur = False
+    # 1. « à » collé au mot précédent (« Hénocà Noé ») : erreur fréquente des scans.
+    colle = re.match(r"^(.{2,}?)(à)$", coeur)
+    if colle and (connu(colle.group(1), ignores) or colle.group(1) in noms):
+        props.append(f"{colle.group(1)} à")
+        sur = True
+    # 2. Noms du livre qui ressemblent (« Metüshélah » → « Methushélah »).
+    if coeur[:1].isupper():
+        proches = difflib.get_close_matches(coeur, [n for n in noms if n != coeur], n=2, cutoff=0.8)
+        props.extend(proches)
+    # 3. Dictionnaire.
+    dico = suggestions(coeur)
+    for p in dico:
+        if p not in props:
+            props.append(p)
+    if props and not sur:
+        p = props[0]
+        # Seulement des accents (« Etreint » → « Étreint »), ou une confusion typique d'un scan (« ouand » → « quand »).
+        sur = _sans_accents(p) == _sans_accents(coeur) or (len(coeur) >= 4 and _confusion_ocr(coeur, p))
+    return [prefixe + p for p in props[:3]], sur
+
+
+# Lettres que la reconnaissance de texte confond souvent sur un scan.
+_CONFUSIONS = {frozenset(p) for p in ("oq", "ce", "li", "l1", "nu", "hb", "ft", "o0", "Il", "rn", "ao")}
+_CONFUSIONS_MULTI = (("rn", "m"), ("cl", "d"), ("ii", "ü"), ("li", "h"), ("vv", "w"), ("in", "m"))
+
+
+def _confusion_ocr(lu: str, propose: str) -> bool:
+    """Vrai si « propose » ne diffère de « lu » que par UNE confusion typique d'un scan."""
+    a, b = lu.lower(), propose.lower()
+    if len(a) == len(b):
+        diff = [(x, y) for x, y in zip(a, b) if x != y]
+        return len(diff) == 1 and frozenset(diff[0]) in _CONFUSIONS
+    for x, y in _CONFUSIONS_MULTI:
+        for s, t in ((x, y), (y, x)):
+            i = a.find(s)
+            while i >= 0:
+                if a[:i] + t + a[i + len(s):] == b:
+                    return True
+                i = a.find(s, i + 1)
+    return False
 
 
 def analyser(livre: Livre, ignores: set[str], max_mots: int = 400, sans_ocr: bool = False) -> list[dict]:
@@ -91,9 +152,14 @@ def analyser(livre: Livre, ignores: set[str], max_mots: int = 400, sans_ocr: boo
     res = []
     for mot, info in list(trouves.items())[:max_mots]:
         info["exemples"] = occurrences[mot]
-        info["suggestions"] = suggestions(sans_elision(mot)) if info["raison"].startswith(("mot inconnu", "inconnu")) else []
+        info["suggestions"], info["sur"] = propositions(mot, info["raison"], noms, ignores)
         res.append(info)
     return res
+
+
+def remplacer_plusieurs(livre: Livre, paires: list[tuple[str, str]]) -> int:
+    """Applique plusieurs remplacements d'un coup (changements sûrs cochés)."""
+    return sum(remplacer_partout(livre, a, b) for a, b in paires if a and b and a != b)
 
 
 def remplacer_partout(livre: Livre, avant: str, apres: str) -> int:

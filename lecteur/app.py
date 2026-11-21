@@ -236,6 +236,21 @@ class Api:
             bibliotheque.ecrire_corrections(c)
         return n
 
+    def remplacer_plusieurs(self, livre_id: str, paires: list, retenir: bool) -> int:
+        """Changements sûrs cochés dans l'aperçu : tout appliquer en une fois."""
+        livre = self._livre(livre_id)
+        paires = [(str(a), str(b)) for a, b in paires]
+        n = douteux.remplacer_plusieurs(livre, paires)
+        if n:
+            self._sauver(livre)
+        if retenir:
+            c = bibliotheque.corrections()
+            for a, b in paires:
+                if a != b:
+                    c.setdefault("apprises", {})[a] = b
+            bibliotheque.ecrire_corrections(c)
+        return n
+
     def ignorer(self, mot: str) -> bool:
         c = bibliotheque.corrections()
         ign = set(c.get("ignores", []))
@@ -345,6 +360,19 @@ class Api:
         return {"url": serveur_audio.adresse(r["mp3"]), "duree": r["duree"],
                 "minutage": json.loads(r["minutage"].read_text(encoding="utf-8"))}
 
+    def preparer_section(self, livre_id: str, section_id: str, mode: str) -> bool:
+        """Assemble une section en arrière-plan (la suivante, pendant qu'on écoute) : passage sans attente."""
+        def travail():
+            try:
+                livre = self._livre(livre_id)
+                s = next((x for x in livre.sections if x.id == section_id), None)
+                if s is not None:
+                    assembler(self._dossier(livre_id), livre, s, mode, self._voix())
+            except Exception:  # noqa: BLE001 - sera refait (avec le message d'erreur) au moment de l'écouter
+                pass
+        threading.Thread(target=travail, daemon=True).start()
+        return True
+
     # --- réglages (phase 4) --------------------------------------------------
     def _fichiers_perimes(self) -> list[Path]:
         """Audio qui ne sert plus, dans tous les livres : blocs et sections refaits, restes d'export."""
@@ -362,8 +390,20 @@ class Api:
 
     def infos_reglages(self) -> dict:
         perimes = self._fichiers_perimes()
+        c = bibliotheque.corrections()
         return {"version": __version__, "donnees": str(bibliotheque.racine()),
+                "apprises": c.get("apprises", {}), "ignores": c.get("ignores", []),
                 "menage": {"fichiers": len(perimes), "octets": sum(f.stat().st_size for f in perimes if f.exists())}}
+
+    def oublier(self, apprise: str, ignore: str) -> bool:
+        """Retire une correction retenue ou un mot gardé (Réglages). Ne touche pas aux livres déjà importés."""
+        c = bibliotheque.corrections()
+        if apprise:
+            c.get("apprises", {}).pop(apprise, None)
+        if ignore:
+            c["ignores"] = [m for m in c.get("ignores", []) if m != ignore]
+        bibliotheque.ecrire_corrections(c)
+        return True
 
     def faire_menage(self) -> dict:
         """Met l'audio périmé à la corbeille Windows (récupérable)."""

@@ -75,6 +75,12 @@ async def generer_bloc(dossier_livre: Path, livre: Livre, bloc: Bloc, voix: str,
     tmp = cible.minutage.with_suffix(".json.tmp")
     tmp.write_text(json.dumps(donnees, ensure_ascii=False), encoding="utf-8")
     tmp.replace(cible.minutage)
+    try:  # bornes de la parole calculées tout de suite : les durées des sections restent instantanées
+        from .assemblage import parole
+
+        parole(cible)
+    except Exception:  # noqa: BLE001 - FFmpeg absent ou faux MP3 de test : calculé plus tard
+        pass
     return cible
 
 
@@ -145,7 +151,7 @@ def menage(dossier_livre: Path, livre: Livre, voix: str) -> list[Path]:
         for b in s.blocs:
             a = audio_du_bloc(dossier_livre, livre, b, voix)
             if a:
-                gardes.update({a.mp3.name, a.minutage.name})
+                gardes.update({a.mp3.name, a.minutage.name, a.mp3.with_suffix(".parole.json").name})
     d = dossier_blocs(dossier_livre)
     if not d.exists():
         return []

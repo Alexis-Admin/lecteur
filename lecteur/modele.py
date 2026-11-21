@@ -89,7 +89,9 @@ def liste_de_lecture(section: Section, mode: str) -> list[Bloc]:
         return texte if mode != "notes" else notes
     if mode == "notes":
         return notes
-    restantes = list(notes)
+    # Les encadrés (études de personnage, thèmes) sont lus à la fin de la section, sans couper le récit.
+    encadres = [n for n in notes if n.genre == "encadre"]
+    restantes = [n for n in notes if n.genre != "encadre"]
     res: list[Bloc] = []
     for b in texte:
         res.append(b)
@@ -98,4 +100,5 @@ def liste_de_lecture(section: Section, mode: str) -> list[Bloc]:
             res.extend(a_inserer)
             restantes = [n for n in restantes if n not in a_inserer]
     res.extend(restantes)
+    res.extend(encadres)
     return res

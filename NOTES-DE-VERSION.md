@@ -1,5 +1,16 @@
 # Notes de version — Lecteur
 
+## 1.0.1 — 21 novembre 2026
+
+Premiers retours d'usage.
+
+- **Écoute plus fluide** : les longs silences au début et à la fin de chaque verset sont retirés (environ 1,4 s de trou avant, 0,15 à 0,5 s maintenant selon la ponctuation). La section suivante se prépare pendant l'écoute. Les encadrés sont lus à la fin de la section, sans couper le récit.
+- **Vitesse par pas de 0,05x** avec les boutons − et + (ou [ et ]). L'export clé USB propose aussi ta vitesse exacte.
+- **Révision plus claire** : « Changements sûrs » à cocher et appliquer en un clic, « À décider » avec des choix nommés (« Remplacer par », « C'est bon », « Écrire… »), progression, et « Déjà corrigé automatiquement » regroupé par sorte.
+- **Réglages** : liste des corrections retenues et des mots gardés, avec ✕ pour les oublier.
+- **Romans scannés** : les lignes grossies ou mises en gras par la reconnaissance de texte ne deviennent plus de faux chapitres. Il faut réimporter le livre pour en profiter.
+- **Barre de gauche** : la bibliothèque reste visible même avec beaucoup de sections, et la section en cours reste à l'écran.
+
 ## 1.0.0 — 21 novembre 2026
 
 Première version complète.
