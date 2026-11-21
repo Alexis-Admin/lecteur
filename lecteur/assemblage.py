@@ -76,15 +76,34 @@ def _ligne_concat(chemin: Path) -> str:
     return "file '" + chemin.as_posix().replace("'", "'\\''") + "'"
 
 
+def _base_section(dossier_livre: Path, section: Section, mode: str, liste: list) -> Path:
+    cle = hashlib.sha1("|".join(f"{a.mp3.name}:{s}" for _, a, s in liste).encode()).hexdigest()[:10]
+    return dossier_livre / "audio" / "sections" / f"{section.id}-{mode}-{cle}"
+
+
+def sections_perimees(dossier_livre: Path, livre: Livre, voix: str) -> list[Path]:
+    """Fichiers de sections assemblées qui ne servent plus (texte corrigé, voix changée…)."""
+    d = dossier_livre / "audio" / "sections"
+    if not d.exists():
+        return []
+    gardes = set()
+    for s in livre.sections:
+        for mode in ("texte", "notes", "mixte"):
+            liste = morceaux(dossier_livre, livre, s, mode, voix)
+            if liste:
+                b = _base_section(dossier_livre, s, mode, liste)
+                gardes.update({b.name + ".mp3", b.name + ".json"})
+    return [f for f in d.iterdir() if f.name not in gardes]
+
+
 def assembler(dossier_livre: Path, livre: Livre, section: Section, mode: str, voix: str) -> dict | None:
     """Retourne {"mp3": Path, "minutage": Path, "duree": s} ou None si l'audio n'est pas complet."""
     liste = morceaux(dossier_livre, livre, section, mode, voix)
     if not liste:
         return None
-    cle = hashlib.sha1("|".join(f"{a.mp3.name}:{s}" for _, a, s in liste).encode()).hexdigest()[:10]
-    d = dossier_livre / "audio" / "sections"
+    base = _base_section(dossier_livre, section, mode, liste)
+    d = base.parent
     d.mkdir(parents=True, exist_ok=True)
-    base = d / f"{section.id}-{mode}-{cle}"
     mp3, js = base.with_suffix(".mp3"), base.with_suffix(".json")
     if mp3.exists() and js.exists():
         return {"mp3": mp3, "minutage": js, "duree": json.loads(js.read_text(encoding="utf-8"))["duree"]}

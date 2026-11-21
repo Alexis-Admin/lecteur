@@ -13,7 +13,8 @@ from pathlib import Path
 
 INTERDITS = {".pdf", ".png", ".jpg", ".jpeg", ".gif", ".webp", ".bmp", ".tif", ".tiff", ".heic", ".svg",
              ".mp3", ".wav", ".ogg", ".m4a", ".opus", ".flac", ".aac", ".epub", ".mobi", ".docx", ".doc",
-             ".zip", ".7z", ".json", ".txt", ".csv", ".xlsx", ".db", ".sqlite", ".lecteur", ".onnx"}
+             ".zip", ".7z", ".json", ".txt", ".csv", ".xlsx", ".db", ".sqlite", ".lecteur", ".onnx",
+             ".woff2", ".woff", ".ttf", ".otf"}
 PERMIS_TXT = {"requirements.txt"}
 DOSSIERS_INTERDITS = ("donnees/", "bibliotheque/", "livres/", "audio/")
 TAILLE_MAX = 300_000  # octets
@@ -41,6 +42,11 @@ def verifier(chemins: list[str]) -> list[str]:
     for chemin in chemins:
         p = Path(chemin)
         nom = p.name.lower()
+        # Seule exception binaire : les polices de l'interface (licence OFL), petites.
+        if chemin.replace("\\", "/").startswith("ui/polices/") and p.suffix.lower() == ".woff2":
+            if p.exists() and p.stat().st_size > TAILLE_MAX:
+                problemes.append(f"{chemin} : police trop grosse")
+            continue
         if p.suffix.lower() in INTERDITS and nom not in PERMIS_TXT:
             problemes.append(f"{chemin} : type de fichier interdit ({p.suffix})")
             continue

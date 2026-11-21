@@ -14,6 +14,9 @@
 !*.toml
 !*.bat
 !outils/serveur_dev.py
+# Polices incluses (licence OFL) : seule exception binaire, vérifiée par le verrou
+!ui/polices/*.woff2
+!ui/polices/LICENCE-OFL.md
 !*.ps1
 !*.sh
 !.gitignore

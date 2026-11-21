@@ -31,7 +31,9 @@ def raison(mot: str, ignores: set[str], debut_phrase: bool = False, noms: set[st
     coeur = sans_elision(m.replace("’", "'"))
     if not coeur or coeur.lower() in ABREVIATIONS:
         return None
-    if len(coeur) > 2 and re.search(r"[a-zà-ÿ][A-ZÀ-Ü]", coeur) and not coeur.isupper():
+    # « McKeown », « MacArthur », « DeVries » : majuscule au milieu, mais un vrai nom.
+    nom_compose = re.match(r"^(Mc|Mac|De|Di|Da|Du|La|Le|Van|Von|O['’])[A-ZÀ-Ü][a-zà-ÿ]", coeur)
+    if len(coeur) > 2 and re.search(r"[a-zà-ÿ][A-ZÀ-Ü]", coeur) and not coeur.isupper() and not nom_compose:
         return "majuscule au milieu du mot"
     if coeur[:1].isupper():
         # Nom propre probable. En début de phrase, on vérifie quand même s'il n'apparaît jamais ailleurs.

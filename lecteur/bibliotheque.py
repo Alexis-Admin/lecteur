@@ -5,6 +5,7 @@ import ctypes
 import json
 import os
 import re
+import threading
 import time
 import unicodedata
 from pathlib import Path
@@ -40,15 +41,32 @@ def lire_json(chemin: Path, defaut):
         return defaut
 
 
+_VERROU_ECRITURE = threading.Lock()
+
+
 def ecrire_json(chemin: Path, donnees) -> None:
-    """Écriture atomique, et seulement si le contenu change (jamais de réécriture inutile)."""
+    """Écriture atomique, et seulement si le contenu change (jamais de réécriture inutile).
+
+    Un verrou évite que deux enregistrements simultanés (réglages sauvés par deux appels de l'interface)
+    se marchent dessus ; sous Windows, un remplacement peut échouer si un antivirus lit le fichier :
+    on réessaie quelques fois.
+    """
     texte = json.dumps(donnees, ensure_ascii=False, indent=1)
-    if chemin.exists() and chemin.read_text(encoding="utf-8") == texte:
-        return
-    chemin.parent.mkdir(parents=True, exist_ok=True)
-    tmp = chemin.with_suffix(chemin.suffix + ".tmp")
-    tmp.write_text(texte, encoding="utf-8")
-    tmp.replace(chemin)
+    with _VERROU_ECRITURE:
+        if chemin.exists() and chemin.read_text(encoding="utf-8") == texte:
+            return
+        chemin.parent.mkdir(parents=True, exist_ok=True)
+        tmp = chemin.with_name(f"{chemin.name}.{os.getpid()}.{threading.get_ident()}.tmp")
+        tmp.write_text(texte, encoding="utf-8")
+        for essai in range(6):
+            try:
+                tmp.replace(chemin)
+                return
+            except PermissionError:
+                if essai == 5:
+                    tmp.unlink(missing_ok=True)
+                    raise
+                time.sleep(0.05 * (essai + 1))
 
 
 def nouvel_id(titre: str) -> str:

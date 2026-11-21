@@ -9,6 +9,8 @@ def test_types_interdits(tmp_path: Path):
     assert verifier(["capture.png"])
     assert verifier(["bibliotheque/genese/livre.json"])
     assert not verifier(["requirements.txt"])
+    assert not verifier(["ui/polices/Inter-latin.woff2"])  # polices incluses : permises
+    assert verifier(["ailleurs/police.woff2"])
 
 
 def test_extrait_de_livre():

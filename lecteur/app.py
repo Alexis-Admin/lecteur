@@ -14,8 +14,8 @@ import pymupdf
 import webview
 
 from . import __version__, bibliotheque, douteux, export_usb, serveur_audio
-from .assemblage import assembler, duree_section
-from .audio import etat_audio, generer_livre
+from .assemblage import assembler, duree_section, sections_perimees
+from .audio import etat_audio, generer_livre, menage
 from .importer import PROFILS, importer_pdf, lire_pages
 from .modele import Livre
 from .ocr_image import langues_disponibles
@@ -31,6 +31,7 @@ class Api:
     def __init__(self) -> None:
         self._fenetre: webview.Window | None = None
         self._verrou = threading.Lock()
+        self._verrou_reglages = threading.Lock()
         self._livres: dict[str, Livre] = {}
         self._generation: dict | None = None  # création d'audio en cours
         self._export: dict | None = None  # copie sur clé USB en cours
@@ -61,9 +62,10 @@ class Api:
         return bibliotheque.reglages()
 
     def enregistrer_reglages(self, r: dict) -> bool:
-        actuels = bibliotheque.reglages()
-        actuels.update(r or {})
-        bibliotheque.ecrire_reglages(actuels)
+        with self._verrou_reglages:  # lire-modifier-écrire d'un bloc : aucun réglage perdu
+            actuels = bibliotheque.reglages()
+            actuels.update(r or {})
+            bibliotheque.ecrire_reglages(actuels)
         return True
 
     # --- bibliothèque --------------------------------------------------------
@@ -342,6 +344,39 @@ class Api:
             return {"pas_pret": True}
         return {"url": serveur_audio.adresse(r["mp3"]), "duree": r["duree"],
                 "minutage": json.loads(r["minutage"].read_text(encoding="utf-8"))}
+
+    # --- réglages (phase 4) --------------------------------------------------
+    def _fichiers_perimes(self) -> list[Path]:
+        """Audio qui ne sert plus, dans tous les livres : blocs et sections refaits, restes d'export."""
+        voix, res = self._voix(), []
+        for info in bibliotheque.liste():
+            try:
+                livre, dossier = self._livre(info["id"]), self._dossier(info["id"])
+            except Exception:  # noqa: BLE001 - livre illisible : on n'y touche pas
+                continue
+            res += menage(dossier, livre, voix) + sections_perimees(dossier, livre, voix)
+            export = dossier / "audio" / "export"
+            if export.exists():
+                res += [f for f in export.iterdir() if f.is_file()]
+        return res
+
+    def infos_reglages(self) -> dict:
+        perimes = self._fichiers_perimes()
+        return {"version": __version__, "donnees": str(bibliotheque.racine()),
+                "menage": {"fichiers": len(perimes), "octets": sum(f.stat().st_size for f in perimes if f.exists())}}
+
+    def faire_menage(self) -> dict:
+        """Met l'audio périmé à la corbeille Windows (récupérable)."""
+        from send2trash import send2trash
+
+        perimes = [f for f in self._fichiers_perimes() if f.exists()]
+        octets = sum(f.stat().st_size for f in perimes)
+        if perimes:
+            send2trash([str(f) for f in perimes])
+        return {"fichiers": len(perimes), "octets": octets}
+
+    def ouvrir_donnees(self) -> bool:
+        return self.ouvrir_dossier(str(bibliotheque.racine()))
 
     def durees_sections(self, livre_id: str, mode: str) -> list[float | None]:
         """Durée de chaque section (None si son audio n'est pas encore créé) : progression et temps restant."""

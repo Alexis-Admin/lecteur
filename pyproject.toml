@@ -1,6 +1,6 @@
 [project]
 name = "lecteur"
-version = "0.1.0"
+version = "1.0.0"
 description = "Transforme des livres scannés en audio avec surlignage mot à mot (remplaçant personnel de Speechify)."
 requires-python = ">=3.11"
 

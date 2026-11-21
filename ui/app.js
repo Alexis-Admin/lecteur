@@ -207,6 +207,11 @@ async function ouvrirApercu() {
   $$("#pistes button").forEach((b) => b.classList.toggle("on", b.dataset.piste === etat.ap.piste));
   $("#pistes").hidden = !aDesNotes(l);
   dessinerAuto();
+  api.etat_audio(l.id).then((e) => {
+    const b = $("#b-etape-voix");
+    b.classList.add("pret");
+    b.lastChild.textContent = e.total && e.fait === e.total ? "Écouter ›" : e.fait ? "Continuer l'audio ›" : "Créer l'audio ›";
+  });
   await chargerDouteux();
   allerPage(etat.ap.page);
 }
@@ -306,7 +311,7 @@ async function dessinerTexte() {
   zone.innerHTML = liste.map((b) => {
     const tag = b.piste === "notes" ? `<span class="tag" contenteditable="false">${echap(b.genre === "encadre" ? "Encadré" : (b.ref || "Note"))}</span>` : "";
     const num = b.genre === "verset" ? `<span class="v" contenteditable="false">${b.v}</span>` : "";
-    return `<div class="bloc ${b.genre}" data-id="${b.id}">${tag}${num}<span class="corps" contenteditable="true" spellcheck="false">${decorer(b.texte, n)}</span></div>`;
+    return `<div class="bloc g-${b.genre}" data-id="${b.id}">${tag}${num}<span class="corps" contenteditable="true" spellcheck="false">${decorer(b.texte, n)}</span></div>`;
   }).join("");
   $$("#ap-texte .corps").forEach((el) => {
     el.addEventListener("blur", async () => {
@@ -622,7 +627,7 @@ function dessinerBarreAudio() {
     : fini ? "Cette section n'a rien à lire." : `Audio créé à <b>${Math.floor((e.fait / e.total) * 100)} %</b>. Tu peux continuer où ça s'est arrêté.`;
   const err = e.erreurs && e.erreurs.length ? `<br><span style="color:#FFB4A8">${echap(e.erreurs[0])}</span>` : "";
   b.innerHTML = `<span class="lecteur-msg">${msg}${err}</span>
-    <button class="prim" id="b-gen" ${e.autre_en_cours || fini ? "disabled" : ""}>${e.fait ? "Continuer" : "Générer l'audio"}</button>`;
+    <button class="prim" id="b-gen" ${e.autre_en_cours || fini ? "disabled" : ""}>${e.fait ? "Continuer la création" : "Créer l'audio"}</button>`;
   const bg = $("#b-gen");
   if (bg) bg.onclick = async () => { await api.generer_audio(etat.livre.id); etat.audio.debut = null; majAudio(); };
 }
@@ -884,18 +889,27 @@ function majProgression(complet = true) {
   const l = etat.livre, d = etat.suivi.durees, a = $("#audio");
   if (!l || !etat.section) return;
   const i = l.sections.indexOf(etat.section);
+  const pl = (n, mot) => `${n.toLocaleString("fr-CA")} ${mot}${n > 1 ? "s" : ""}`;
+  // Pas encore d'audio : on montre la taille du livre, pas un pourcentage qui ne veut rien dire.
+  if (!d || !d.some((x) => x)) {
+    $("#livre-progres").style.width = "0%";
+    $("#livre-info").textContent = `${l.pages.length ? pl(l.pages.length, l.meta.type === "images" ? "image" : "page") + " · " : ""}${pl(l.sections.length, "section")} · audio à créer`;
+    return;
+  }
   let pc, reste = null;
-  if (d && d.every((x) => x)) {
+  if (d.every((x) => x)) {
     const total = d.reduce((x, y) => x + y, 0);
     const avant = d.slice(0, i).reduce((x, y) => x + y, 0) + (a.currentTime || 0);
     pc = total ? avant / total : 0;
     reste = (total - avant) / (a.playbackRate || 1);  // temps réel d'écoute à la vitesse choisie
   } else pc = (i + (a.duration ? a.currentTime / a.duration : 0)) / l.sections.length;
-  $("#livre-progres").style.width = `${Math.max(0.5, pc * 100)}%`;
+  pc = Math.min(pc, 0.999);  // jamais 100 % avant la fin
+  $("#livre-progres").style.width = `${pc > 0 ? Math.max(1, pc * 100) : 0}%`;
   if (complet || Date.now() - (etat.suivi.texteProgres || 0) > 2000) {
     etat.suivi.texteProgres = Date.now();
-    const pctxt = pc < 0.1 && pc > 0 ? (Math.floor(pc * 1000) / 10).toLocaleString("fr-CA") : Math.floor(pc * 100);
-    $("#livre-info").textContent = reste !== null ? `${pctxt} % · ${duree(reste)} restantes` : `${pctxt} % · section ${i + 1} sur ${l.sections.length}`;
+    const pctxt = pc <= 0 ? "0" : pc < 0.001 ? "< 0,1" : pc < 0.1 ? (Math.floor(pc * 1000) / 10).toLocaleString("fr-CA") : Math.floor(pc * 100);
+    const audioPartiel = d.every((x) => x) ? "" : " · audio en partie";
+    $("#livre-info").textContent = reste !== null ? `${pctxt} % · ${duree(reste)} restantes` : `${pctxt} % · section ${i + 1} sur ${l.sections.length}${audioPartiel}`;
   }
 }
 
@@ -971,7 +985,7 @@ function dessinerExport() {
       <p class="petit" style="margin:4px 0 0">La radio de l'auto ne peut pas accélérer : la vitesse est intégrée aux fichiers, sans changer la voix.</p></div>
     ${manque}${tropPetit}
     <div class="liste-f" aria-label="Fichiers qui seront copiés">${fich}</div>
-    <p class="petit" style="margin:0">Dossier <span class="mono">${echap((d ? d.chemin.replace(/\\$/, "") : "?") + "\\" + p.dossier)}</span> · titre, livre et n° de piste dans chaque MP3 · copiés un par un dans l'ordre (radios d'auto).</p>`;
+    <p class="petit" style="margin:0">${d ? `Dossier <span class="mono">${echap(d.chemin.replace(/\\$/, "") + "\\" + p.dossier)}</span>` : "<b>Choisis une clé USB ou un dossier.</b>"} · titre, livre et n° de piste dans chaque MP3 · copiés un par un dans l'ordre (radios d'auto).</p>`;
   $("#exp-resume").textContent = p.prets ? `${duree(p.duree)} · ${mo(p.octets)}` : "";
   const possible = d && p.prets > 0 && !tropPetit;
   boutons.innerHTML = `<button class="sec2" id="exp-annuler">Annuler</button><button class="prim" id="exp-go" ${possible ? "" : "disabled"}>Copier ${p.prets} MP3</button>`;
@@ -1034,10 +1048,73 @@ function dessinerCopie() {
   };
 }
 
+// ---------- réglages (phase 4) ----------
+const RACCOURCIS = [["Espace", "Lecture / pause"], ["← / →", "Reculer / avancer de 15 s"], ["Ctrl + ← / →", "Section précédente / suivante"],
+  ["[ / ]", "Moins vite / plus vite"], ["Clic sur une phrase", "Lire à partir de cette phrase"], ["Ctrl + O", "Importer un livre"],
+  ["Ctrl + V", "Coller une capture, une adresse web ou un texte"], ["Ctrl + J", "Mode jour / nuit"], ["PgPréc / PgSuiv", "Page précédente / suivante (aperçu)"],
+  ["Ctrl + ,", "Réglages"], ["Échap", "Fermer"]];
+
+async function ouvrirReglages() {
+  const r = await api.infos_reglages();
+  $("#reg-version").textContent = `Lecteur · version ${r.version}`;
+  const l = etat.livre;
+  const menage = r.menage.fichiers
+    ? `${r.menage.fichiers.toLocaleString("fr-CA")} fichiers audio périmés · ${mo(r.menage.octets)}`
+    : "Aucun fichier audio périmé.";
+  $("#reg-corps").innerHTML = `
+    <div class="reg"><div class="reg-l1"><b>Mes données</b><button class="pil" id="reg-donnees">Ouvrir le dossier</button></div>
+      <span class="petit mono">${echap(r.donnees)}</span>
+      <span class="petit">Livres, audio, corrections apprises et réglages. Ils restent là si tu réinstalles l'app.</span></div>
+    <div class="reg"><div class="reg-l1"><b>Ménage de l'audio</b><button class="pil" id="reg-menage" ${r.menage.fichiers ? "" : "disabled"}>Mettre à la corbeille</button></div>
+      <span class="petit">${menage} (anciennes versions après une correction ou un changement de voix).</span></div>
+    ${l ? `<div class="reg"><div class="reg-l1"><b>Livre ouvert : ${echap(l.titre)}</b><button class="pil" id="reg-suppr">Mettre ce livre à la corbeille</button></div>
+      <span class="petit">Le livre, son audio et ses corrections vont dans la corbeille Windows (récupérables). Ton PDF d'origine n'est jamais touché.</span></div>` : ""}
+    <div class="reg"><b>Raccourcis clavier</b><div class="raccourcis" style="margin-top:6px">${RACCOURCIS.map(([k, v]) => `<kbd>${k}</kbd><span>${v}</span>`).join("")}</div></div>`;
+  $("#reglages").hidden = false;
+  $("#reg-donnees").onclick = () => api.ouvrir_donnees();
+  $("#reg-menage").onclick = async () => {
+    const x = await api.faire_menage();
+    toast(`${x.fichiers} fichiers mis à la corbeille (${mo(x.octets)} libérés).`);
+    ouvrirReglages();
+  };
+  if ($("#reg-suppr")) $("#reg-suppr").onclick = async (ev) => {
+    const b = ev.currentTarget;
+    if (!b.dataset.confirme) { b.dataset.confirme = "1"; b.textContent = "Confirmer : à la corbeille"; b.classList.add("ok"); return; }
+    $("#audio").pause();
+    await api.supprimer(l.id);
+    etat.livre = null;
+    $("#reglages").hidden = true;
+    $("#carte-livre").hidden = true; $("#sections").innerHTML = ""; $("#lab-sections").hidden = true;
+    $("#b-apercu").disabled = true; $("#b-usb").disabled = true;
+    afficherVue("accueil");
+    await chargerLivres();
+    toast("Livre mis à la corbeille Windows (récupérable).");
+  };
+}
+
 // ---------- démarrage ----------
 function brancher() {
   $("#b-importer").onclick = () => ouvrirImport();
-  $("#b-importer2").onclick = () => ouvrirImport();
+  $$("#sources-accueil .source").forEach((b) => (b.onclick = () => ouvrirImport(b.dataset.type)));
+  $("#b-reglages").onclick = ouvrirReglages;
+  $("#reg-fermer").onclick = () => ($("#reglages").hidden = true);
+  $("#loupe").onclick = () => ($("#loupe").hidden = true);
+  $("#scan").addEventListener("click", async (e) => {
+    if (e.target.tagName !== "IMG") return;
+    $("#loupe-img").src = e.target.src;  // tout de suite, puis en haute définition
+    $("#loupe").hidden = false;
+    if (sansPages()) return;
+    const r = await api.page(etat.livre.id, etat.ap.page, 1800);
+    if (r.image && !$("#loupe").hidden) $("#loupe-img").src = r.image;
+  });
+  $("#b-etape-voix").onclick = async () => {
+    afficherLecture();
+    await majAudio();
+    if (etat.audio.e && etat.audio.e.fait < etat.audio.e.total && !etat.audio.e.en_cours) {
+      await api.generer_audio(etat.livre.id); etat.audio.debut = null; majAudio();
+      toast("Création de l'audio lancée.");
+    }
+  };
   $("#b-theme").onclick = basculerTheme;
   $("#b-apercu").onclick = () => etat.livre && ouvrirApercu();
   $("#b-retour").onclick = () => afficherLecture();
@@ -1074,8 +1151,11 @@ function brancher() {
     const edition = e.target.isContentEditable || e.target.tagName === "INPUT";
     if (e.ctrlKey && e.key.toLowerCase() === "o") { e.preventDefault(); ouvrirImport(); }
     else if (e.ctrlKey && e.key.toLowerCase() === "j") { e.preventDefault(); basculerTheme(); }
+    else if (e.ctrlKey && e.key === ",") { e.preventDefault(); ouvrirReglages(); }
     else if (e.key === "Escape") {
-      if (!$("#export").hidden) fermerExport();
+      if (!$("#loupe").hidden) $("#loupe").hidden = true;
+      else if (!$("#reglages").hidden) $("#reglages").hidden = true;
+      else if (!$("#export").hidden) fermerExport();
       else if (!$("#import").hidden) fermerImport();
       else if (!$("#vue-apercu").hidden && !edition) afficherLecture();
     } else if (!edition && !$("#vue-apercu").hidden && (e.key === "PageDown" || e.key === "PageUp")) {
