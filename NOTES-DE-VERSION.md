@@ -1,5 +1,11 @@
 # Notes de version — Lecteur
 
+## 1.2.1 — 21 novembre 2026
+
+- **Journal des erreurs** : toute erreur imprévue s'affiche à l'écran (au lieu d'un bouton qui « ne fait rien ») et est notée dans `Documents\Lecteur\journal-erreurs.txt`. ⚙ Réglages › Journal des erreurs › « Copier pour Claude ».
+- Icône de la fenêtre : appels Windows isolés du reste de l'app (plus sûr).
+- Outil de test `outils/essai_fenetre.py` : rejoue des gestes dans la vraie fenêtre, avec des données de test.
+
 ## 1.2.0 — 21 novembre 2026
 
 - **Vue « Page »** : bascule entre le texte et la page réelle du livre (scan). Le mot lu y est encadré, la ligne est teintée et les pages tournent toutes seules ; un clic sur un mot de la page fait partir la lecture de là. Touches T et P.

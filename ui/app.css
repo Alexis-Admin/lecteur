@@ -307,6 +307,8 @@ body[data-theme="nuit"] .page-scan img { filter: brightness(.88) contrast(1.05);
 .rev-tete { display: flex; align-items: center; justify-content: space-between; gap: 8px; }
 .rev-tete .lab-c { letter-spacing: .12em; white-space: nowrap; }
 .rev-tete .lien { white-space: nowrap; font-size: 12px; }
+.journal { margin: 6px 0 0; max-height: 140px; overflow: auto; font: 11px/1.45 "JetBrains Mono", monospace; background: var(--fond);
+  border: 1px solid var(--filet); border-radius: 8px; padding: 8px 10px; white-space: pre-wrap; user-select: text; }
 .noms-l { display: flex; flex-wrap: wrap; gap: 5px; max-height: 180px; overflow: auto; }
 .nom-p { border: 1px solid var(--filet); background: var(--carte); color: var(--texte); border-radius: 999px; padding: 3px 10px; font: 13px Newsreader, Georgia, serif; cursor: pointer; }
 .nom-p:hover { border-color: var(--texte); background: var(--douteux); color: var(--douteux-t); }

@@ -53,6 +53,18 @@ class Api:
             self._livres[livre_id] = bibliotheque.ouvrir(livre_id)
         return self._livres[livre_id]
 
+    def noter_erreur(self, message: str, detail: str = "") -> bool:
+        """Journal des erreurs (Documents\\Lecteur\\journal-erreurs.txt) : pour comprendre un bogue après coup."""
+        try:
+            f = bibliotheque.racine() / "journal-erreurs.txt"
+            if f.exists() and f.stat().st_size > 500_000:  # on garde le journal petit
+                f.replace(f.with_name("journal-erreurs-ancien.txt"))
+            with f.open("a", encoding="utf-8") as j:
+                j.write(f"\n[{time.strftime('%Y-%m-%d %H:%M:%S')}] v{__version__} {message}\n{detail}\n")
+        except Exception:  # noqa: BLE001 - le journal ne doit jamais faire planter l'app
+            pass
+        return True
+
     def _sauver(self, livre: Livre) -> None:
         with self._verrou:
             bibliotheque.enregistrer(livre)
@@ -515,7 +527,9 @@ class Api:
     def infos_reglages(self) -> dict:
         perimes = self._fichiers_perimes()
         c = bibliotheque.corrections()
+        journal = bibliotheque.racine() / "journal-erreurs.txt"
         return {"version": __version__, "donnees": str(bibliotheque.racine()),
+                "journal": journal.read_text(encoding="utf-8")[-1500:] if journal.exists() else "",
                 "apprises": c.get("apprises", {}), "ignores": c.get("ignores", []),
                 "menage": {"fichiers": len(perimes), "octets": sum(f.stat().st_size for f in perimes if f.exists())}}
 
@@ -628,7 +642,9 @@ def appliquer_icone(titre: str) -> None:
 
         from ctypes import wintypes
 
-        u = ctypes.windll.user32
+        # Copie PRIVÉE de user32 : changer les types de ctypes.windll.user32 (partagé avec pywebview) cassait
+        # d'autres fonctions de la fenêtre, dont la boîte « Choisir un PDF » (bogue de la 1.2.0).
+        u = ctypes.WinDLL("user32", use_last_error=True)
         # Types 64 bits explicites : sinon les poignées sont tronquées et rien ne s'affiche.
         u.FindWindowW.restype = wintypes.HWND
         u.LoadImageW.restype = wintypes.HANDLE

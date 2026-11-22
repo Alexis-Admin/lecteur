@@ -13,13 +13,26 @@ const etat = {
 };
 
 // ---------- utilitaires ----------
-function toast(msg) {
+function toast(msg, duree = 2200) {
   const t = $("#toast");
   t.textContent = msg;
   t.classList.add("on");
   clearTimeout(toast._t);
-  toast._t = setTimeout(() => t.classList.remove("on"), 2200);
+  toast._t = setTimeout(() => t.classList.remove("on"), duree);
 }
+
+// Toute erreur imprévue est montrée (au lieu d'un bouton qui « ne fait rien ») et notée dans le journal
+// Documents\Lecteur\journal-erreurs.txt, pour pouvoir la corriger ensuite.
+function signalerErreur(message, detail) {
+  const m = String(message || "Erreur inconnue").replace(/^.*?Error:\s*/, "").slice(0, 200);
+  toast("Oups, quelque chose n'a pas marché. Le détail est noté dans ⚙ Réglages › Journal des erreurs.", 6000);
+  try { if (typeof api !== "undefined" && api && api.noter_erreur) api.noter_erreur(m, String(detail || "").slice(0, 4000)); } catch (e) { /* rien */ }
+}
+window.addEventListener("error", (e) => signalerErreur(e.message, `${e.filename}:${e.lineno}:${e.colno}\n${e.error && e.error.stack || ""}`));
+window.addEventListener("unhandledrejection", (e) => {
+  const r = e.reason;
+  signalerErreur(r && (r.message || r.name) || r, r && r.stack || JSON.stringify(r));
+});
 function sauverReglages(r) {
   Object.assign(etat.reglages, r);
   api.enregistrer_reglages(r);
@@ -1555,9 +1568,16 @@ async function ouvrirReglages() {
       <div class="memo-l">${r.ignores.map((m) => `<span class="memo">${echap(m)}<button data-oublier-m="${echap(m)}" title="Le signaler de nouveau">✕</button></span>`).join("") || '<span class="petit">Aucun.</span>'}</div></div>
     ${l ? `<div class="reg"><div class="reg-l1"><b>Livre ouvert : ${echap(l.titre)}</b><button class="pil" id="reg-suppr">Mettre ce livre à la corbeille</button></div>
       <span class="petit">Aussi par le bouton ⋯ (ou le clic droit) sur un livre de la bibliothèque. Ton PDF d'origine n'est jamais touché.</span></div>` : ""}
+    <div class="reg"><div class="reg-l1"><b>Journal des erreurs</b>${r.journal ? '<button class="pil" id="reg-journal">Copier pour Claude</button>' : ""}</div>
+      <span class="petit">${r.journal ? "Les dernières erreurs notées. Copie-les et colle-les à Claude : il saura quoi corriger." : "Aucune erreur notée."}</span>
+      ${r.journal ? `<pre class="journal">${echap(r.journal.trim().split("\n").slice(-12).join("\n"))}</pre>` : ""}</div>
     <div class="reg"><b>Raccourcis clavier</b><div class="raccourcis" style="margin-top:6px">${RACCOURCIS.map(([k, v]) => `<kbd>${k}</kbd><span>${v}</span>`).join("")}</div></div>`;
   $("#reglages").hidden = false;
   $("#reg-donnees").onclick = () => api.ouvrir_donnees();
+  if ($("#reg-journal")) $("#reg-journal").onclick = async () => {
+    try { await navigator.clipboard.writeText(`Lecteur ${r.version}\n${r.journal}`); toast("Journal copié : colle-le dans ta conversation avec Claude."); }
+    catch (e) { toast("Copie impossible : sélectionne le texte du journal et fais Ctrl+C."); }
+  };
   const apresOubli = async () => { await ouvrirReglages(); if (etat.livre && !$("#vue-apercu").hidden) chargerDouteux(); };
   $$("#reg-corps [data-oublier-c]").forEach((b) => (b.onclick = async () => { await api.oublier(b.dataset.oublierC, ""); toast(`Correction « ${b.dataset.oublierC} » oubliée.`); apresOubli(); }));
   $$("#reg-corps [data-oublier-m]").forEach((b) => (b.onclick = async () => { await api.oublier("", b.dataset.oublierM); toast(`« ${b.dataset.oublierM} » sera de nouveau signalé.`); apresOubli(); }));
