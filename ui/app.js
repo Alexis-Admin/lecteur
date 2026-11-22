@@ -31,7 +31,9 @@ function listeDeLecture(section, mode) {
   const texte = blocs(section, "texte"), notes = blocs(section, "notes");
   if (mode === "texte" || !notes.length) return mode === "notes" ? notes : texte;
   if (mode === "notes") return notes;
-  let restantes = [...notes];
+  // Même ordre que l'audio (lecteur/modele.py) : chaque note après son verset, encadrés à la fin.
+  const encadres = notes.filter((n) => n.genre === "encadre");
+  let restantes = notes.filter((n) => n.genre !== "encadre");
   const res = [];
   for (const b of texte) {
     res.push(b);
@@ -41,7 +43,7 @@ function listeDeLecture(section, mode) {
       restantes = restantes.filter((n) => !ici.includes(n));
     }
   }
-  return res.concat(restantes);
+  return res.concat(restantes, encadres);
 }
 
 // ---------- thème ----------
@@ -65,37 +67,109 @@ async function chargerLivres() {
     return;
   }
   ul.innerHTML = etat.livres.map((l) => `
-    <button class="sec ${etat.livre && etat.livre.id === l.id ? "actif" : ""}" data-id="${l.id}" title="${echap(l.titre)} — clic droit : options">
-      <span class="n"><svg viewBox="0 0 24 24"><path d="M4 19.5A2.5 2.5 0 0 1 6.5 17H20V3H6.5A2.5 2.5 0 0 0 4 5.5z"/></svg></span>
-      <span class="t">${echap(l.titre)}</span><span class="d mono">${{ texte: "texte", web: "web" }[l.type] || l.pages + " p."}</span></button>`).join("");
+    <div class="livre-l">
+      <button class="sec ${etat.livre && etat.livre.id === l.id ? "actif" : ""}" data-id="${l.id}" title="${echap(l.titre)}">
+        <span class="n"><svg viewBox="0 0 24 24"><path d="M4 19.5A2.5 2.5 0 0 1 6.5 17H20V3H6.5A2.5 2.5 0 0 0 4 5.5z"/></svg></span>
+        <span class="t">${echap(l.titre)}</span><span class="d mono">${{ texte: "texte", web: "web" }[l.type] || l.pages + " p."}</span></button>
+      <button class="livre-menu" data-menu="${l.id}" aria-label="Options du livre ${echap(l.titre)}" title="Options : renommer, aperçu, corbeille">⋯</button>
+    </div>`).join("");
   $$("#livres .sec").forEach((b) => {
     b.onclick = () => ouvrirLivre(b.dataset.id);
-    b.oncontextmenu = (e) => { e.preventDefault(); menuLivre(b); };
+    b.oncontextmenu = (e) => { e.preventDefault(); menuLivre(b.dataset.id, e.clientX, e.clientY); };
   });
+  $$("#livres .livre-menu").forEach((b) => (b.onclick = (e) => {
+    e.stopPropagation();
+    const r = b.getBoundingClientRect();
+    menuLivre(b.dataset.menu, r.right, r.top);
+  }));
 }
 
-function menuLivre(bouton) {
-  // Menu simple : un second clic sur « Mettre à la corbeille » confirme.
-  const id = bouton.dataset.id;
-  const t = bouton.querySelector(".t");
-  const ancien = t.textContent;
-  t.textContent = "Mettre à la corbeille ? (clic = oui)";
-  bouton.classList.add("actif");
-  const annuler = () => { t.textContent = ancien; chargerLivres(); };
-  bouton.onclick = async () => {
-    await api.supprimer(id);
-    if (etat.livre && etat.livre.id === id) { etat.livre = null; afficherVue("accueil"); $("#carte-livre").hidden = true; $("#sections").innerHTML = ""; $("#lab-sections").hidden = true; }
-    toast("Livre mis à la corbeille Windows (récupérable).");
-    chargerLivres();
+// Menu d'un livre (bouton ⋯ ou clic droit) : ouvrir, aperçu, renommer, corbeille.
+function menuLivre(id, x, y) {
+  fermerMenus();
+  const l = etat.livres.find((z) => z.id === id);
+  if (!l) return;
+  const m = document.createElement("div");
+  m.className = "menu-ctx";
+  m.setAttribute("role", "menu");
+  m.innerHTML = `
+    <button role="menuitem" data-a="ouvrir">Ouvrir</button>
+    <button role="menuitem" data-a="apercu">Aperçu et corrections</button>
+    <button role="menuitem" data-a="renommer">Renommer…</button>
+    <hr>
+    <button role="menuitem" data-a="corbeille" class="danger">Mettre à la corbeille…</button>`;
+  document.body.appendChild(m);
+  const r = m.getBoundingClientRect();
+  m.style.left = `${Math.min(x, window.innerWidth - r.width - 8)}px`;
+  m.style.top = `${Math.min(y, window.innerHeight - r.height - 8)}px`;
+  m.querySelector("button").focus();
+  m.onclick = async (e) => {
+    const a = e.target.dataset.a;
+    if (!a) return;
+    fermerMenus();
+    if (a === "ouvrir") ouvrirLivre(id);
+    else if (a === "apercu") { await ouvrirLivre(id); ouvrirApercu(); }
+    else if (a === "renommer") {
+      const nouveau = await demander("Renommer le livre", "Nouveau titre :", l.titre, "Renommer");
+      if (nouveau && nouveau.trim() && nouveau.trim() !== l.titre) {
+        await api.renommer(id, nouveau.trim());
+        if (etat.livre && etat.livre.id === id) { etat.livre.titre = nouveau.trim(); $("#livre-titre").textContent = nouveau.trim(); }
+        chargerLivres();
+        toast("Livre renommé.");
+      }
+    } else if (a === "corbeille") mettreLivreCorbeille(id, l.titre);
   };
-  setTimeout(() => document.addEventListener("click", function f(e) { if (!bouton.contains(e.target)) { annuler(); } document.removeEventListener("click", f); }), 0);
+  setTimeout(() => document.addEventListener("click", fermerMenus, { once: true }), 0);
 }
+
+function fermerMenus() { $$(".menu-ctx").forEach((m) => m.remove()); }
+
+async function mettreLivreCorbeille(id, titre) {
+  const ok = await confirmer("Mettre ce livre à la corbeille ?",
+    `« ${titre} », son audio et ses corrections vont dans la corbeille Windows : tu peux les récupérer (clic droit → Restaurer). Ton PDF d'origine n'est jamais touché.`,
+    "Mettre à la corbeille", true);
+  if (!ok) return;
+  if (etat.livre && etat.livre.id === id) {
+    $("#audio").pause();
+    etat.livre = null;
+    afficherVue("accueil");
+    $("#carte-livre").hidden = true; $("#sections").innerHTML = ""; $("#lab-sections").hidden = true;
+    $("#b-apercu").disabled = true; $("#b-usb").disabled = true;
+  }
+  await api.supprimer(id);
+  await chargerLivres();
+  toast("Livre mis à la corbeille Windows (récupérable).");
+}
+
+// Petites fenêtres de confirmation et de saisie, au style de l'app (au lieu de clics à double sens).
+function dialogue({ titre, texte, valeur = null, ok = "OK", danger = false }) {
+  return new Promise((resoudre) => {
+    const fond = document.createElement("div");
+    fond.className = "dlg-fond";
+    fond.innerHTML = `<div class="dlg" role="dialog" aria-modal="true" aria-label="${echap(titre)}">
+      <h3>${echap(titre)}</h3><p>${echap(texte)}</p>
+      ${valeur !== null ? `<input type="text" class="dlg-champ" value="${echap(valeur)}">` : ""}
+      <div class="dlg-acts"><button class="pil" data-r="non">Annuler</button><button class="prim ${danger ? "danger" : ""}" data-r="oui">${echap(ok)}</button></div></div>`;
+    document.body.appendChild(fond);
+    const champ = fond.querySelector(".dlg-champ");
+    (champ || fond.querySelector("[data-r=oui]")).focus();
+    if (champ) champ.select();
+    const fin = (oui) => { fond.remove(); document.removeEventListener("keydown", clavier, true); resoudre(oui ? (champ ? champ.value : true) : (champ ? null : false)); };
+    const clavier = (e) => { if (e.key === "Escape") { e.stopPropagation(); fin(false); } else if (e.key === "Enter") { e.preventDefault(); fin(true); } };
+    document.addEventListener("keydown", clavier, true);
+    fond.onclick = (e) => { if (e.target === fond) fin(false); const r = e.target.dataset.r; if (r) fin(r === "oui"); };
+  });
+}
+const confirmer = (titre, texte, ok, danger = false) => dialogue({ titre, texte, ok, danger });
+const demander = (titre, texte, valeur, ok) => dialogue({ titre, texte, valeur, ok });
 
 // Nom de la voix du livre ouvert (voix anglaise pour un livre en anglais).
 function majNomVoix() {
   api.voix(etat.livre ? etat.livre.id : "").then((v) => {
     const x = v.voix.find((y) => y.id === v.choisie);
-    if (x) $("#voix-nom").textContent = x.nom;
+    if (x) $("#voix-nom").textContent = x.nom.replace(/ \(.*\)$/, "");
+    const m = /:([a-z]{2}-[A-Z]{2})-/.exec(v.choisie || "");
+    $("#voix-langue").textContent = m ? m[1] : v.choisie && v.choisie.startsWith("piper") ? "hors ligne" : "fr-CA";
   });
 }
 
@@ -200,7 +274,10 @@ function afficherLecture() {
   $("#zone-lecture").scrollTop = 0;
   etat.suivi.courant = null;
   etat.suivi.mot = -1;
-  if (etat.audio.e && !etat.audio.e.en_cours && sectionPrete()) chargerAudioSection(false);
+  etat.suivi.manuel = false;
+  appliquerVueLecture();
+  // Section prête : son lecteur se charge, même si le reste du livre est encore en création.
+  if (etat.audio.e && sectionPrete()) chargerAudioSection(false);
   else dessinerBarreAudio();
 }
 
@@ -741,6 +818,12 @@ function regleVitesse(x) {
   a.playbackRate = x;
   sauverReglages({ vitesse: x });
   dessinerLecteur();
+  majProgression();
+  // Ce que ça change : temps qui reste, recalculé à la nouvelle vitesse.
+  if (a.duration) {
+    const livre = etat.suivi.dureeRestanteLivre;
+    toast(`${vitTexte(x)} · section : ${duree(resteSection())} restantes${livre ? ` · livre : ${duree(livre)}` : ""}`);
+  }
   return x;
 }
 const fmt = (s) => { s = Math.max(0, Math.floor(s || 0)); const h = Math.floor(s / 3600), m = Math.floor((s % 3600) / 60), x = s % 60;
@@ -769,9 +852,28 @@ function sectionPrete() {
   return s && s.total > 0 && s.fait === s.total;
 }
 
+// Création en cours, résumée en une ligne (au-dessus du lecteur, qui reste utilisable).
+function texteCreation(e) {
+  const pc = e.total ? Math.max(1, Math.floor((e.fait / e.total) * 100)) : 0;
+  let reste = "";
+  const d = etat.audio.debut;
+  if (d && e.fait > d.fait + 2) {
+    const sec = ((Date.now() - d.t) / 1000 / (e.fait - d.fait)) * (e.total - e.fait);
+    reste = sec < 90 ? ` · environ ${Math.round(sec)} s` : ` · environ ${Math.round(sec / 60)} min`;
+  }
+  return { pc, txt: `Création de l'audio du livre : ${pc} %${reste}` };
+}
+
 function dessinerBarreAudio() {
   const e = etat.audio.e, b = $("#barre-audio");
   if (!e) { b.innerHTML = ""; return; }
+  // La section est prête : le lecteur reste disponible même pendant la création du reste du livre
+  // (avant, la barre de progression prenait toute la place et on ne pouvait plus arrêter la voix).
+  if (sectionPrete()) {
+    // Déjà affiché : on ne met à jour que la petite ligne de création (sinon les boutons clignotent chaque seconde).
+    if ($("#a-play")) majCreationMini(); else dessinerLecteur();
+    return;
+  }
   if (e.en_cours) {
     const pc = e.total ? Math.max(1, Math.floor((e.fait / e.total) * 100)) : 0;
     let reste = "";
@@ -780,13 +882,14 @@ function dessinerBarreAudio() {
       const sec = ((Date.now() - d.t) / 1000 / (e.fait - d.fait)) * (e.total - e.fait);
       reste = sec < 90 ? `environ ${Math.round(sec)} s` : `environ ${Math.round(sec / 60)} min`;
     }
-    b.innerHTML = `<div class="gen"><div class="l1"><span>Création de l'audio… <b>${e.fait.toLocaleString("fr-CA")} / ${e.total.toLocaleString("fr-CA")}</b> morceaux</span><span>${reste}</span></div>
+    const sec = e.sections.find((x) => etat.section && x.id === etat.section.id);
+    const ici = sec && sec.total ? ` · cette section : ${Math.floor((sec.fait / sec.total) * 100)} %` : "";
+    b.innerHTML = `<div class="gen"><div class="l1"><span>Création de l'audio… <b>${e.fait.toLocaleString("fr-CA")} / ${e.total.toLocaleString("fr-CA")}</b> morceaux${ici}</span><span>${reste}</span></div>
       <div class="rail"><i style="width:${pc}%"></i></div></div>
       <button class="sec3" id="b-pause-gen" title="Arrêter ; tu pourras reprendre où ça s'est arrêté">Pause</button>`;
     $("#b-pause-gen").onclick = async () => { await api.arreter_audio(); toast("Arrêt après les morceaux en cours…"); };
     return;
   }
-  if (sectionPrete()) { dessinerLecteur(); return; }
   const fini = e.total && e.fait === e.total;
   const msg = e.autre_en_cours ? "Un autre livre est en train de créer son audio. Attends qu'il finisse."
     : e.fait === 0 ? `L'audio n'est pas encore créé (${e.total.toLocaleString("fr-CA")} morceaux). Vérifie le texte dans <b>Aperçu</b>, puis lance la création.`
@@ -798,10 +901,28 @@ function dessinerBarreAudio() {
   if (bg) bg.onclick = async () => { await api.generer_audio(etat.livre.id, etat.section ? etat.section.id : ""); etat.audio.debut = null; majAudio(); };
 }
 
+function majCreationMini() {
+  const e = etat.audio.e, el = $("#barre-audio .gen-mini");
+  if (!e || !e.en_cours) { if (el) el.remove(); return; }
+  if (!el) { dessinerLecteur(); return; }
+  const c = texteCreation(e);
+  el.querySelector("i").style.width = `${c.pc}%`;
+  el.querySelector("span").textContent = c.txt;
+}
+
+// Temps qui reste dans la section, à la vitesse choisie (1 min à 2x = 30 s d'écoute).
+function resteSection() {
+  const a = $("#audio");
+  return ((a.duration || 0) - a.currentTime) / (a.playbackRate || 1);
+}
+
 function dessinerLecteur() {
   const a = $("#audio"), l = etat.livre, i = l.sections.indexOf(etat.section);
   const v = etat.reglages.vitesse || 1;
+  const e = etat.audio.e;
+  const creation = e && e.en_cours ? texteCreation(e) : null;
   $("#barre-audio").innerHTML = `
+    ${creation ? `<div class="gen-mini" title="Le reste du livre se crée pendant que tu écoutes"><i style="width:${creation.pc}%"></i><span>${creation.txt}</span><button class="lien" id="b-pause-gen">Pause</button></div>` : ""}
     <div class="ctl">
       <button class="cb" id="a-prec" aria-label="Section précédente" title="Section précédente (Ctrl+←)" ${i <= 0 ? "disabled" : ""}>${ICONES.prec}</button>
       <button class="cb" id="a-moins" aria-label="Reculer de 15 secondes" title="Reculer de 15 s (←)">−15</button>
@@ -809,7 +930,7 @@ function dessinerLecteur() {
       <button class="cb" id="a-plus" aria-label="Avancer de 15 secondes" title="Avancer de 15 s (→)">+15</button>
       <button class="cb" id="a-suiv" aria-label="Section suivante" title="Section suivante (Ctrl+→)" ${i >= l.sections.length - 1 ? "disabled" : ""}>${ICONES.suiv}</button>
     </div>
-    <div class="temps"><div class="l1"><span class="mono" id="a-t">${fmt(a.currentTime)}</span><span>${i < l.sections.length - 1 ? "Suivante : " + echap(l.sections[i + 1].ref || l.sections[i + 1].titre) : "Fin du livre"}</span><span class="mono" id="a-reste">−${fmt((a.duration || 0) - a.currentTime)}</span></div>
+    <div class="temps"><div class="l1"><span class="mono" id="a-t">${fmt(a.currentTime)}</span><span>${i < l.sections.length - 1 ? "Suivante : " + echap(l.sections[i + 1].ref || l.sections[i + 1].titre) : "Fin du livre"}</span><span class="mono" id="a-reste" title="Temps qui reste dans cette section, à ta vitesse">−${fmt(resteSection())}</span></div>
       <div class="rail" id="a-rail" title="Cliquer pour aller à cet endroit"><i id="a-barre" style="width:${a.duration ? (a.currentTime / a.duration) * 100 : 0}%"></i></div></div>
     <div class="vit-g" role="group" aria-label="Vitesse de lecture">
       <button class="cb vit-pas" id="a-vit-moins" aria-label="Moins vite" title="Moins vite : −0,05x ([)" ${v <= VIT_MIN ? "disabled" : ""}>−</button>
@@ -817,6 +938,7 @@ function dessinerLecteur() {
         ${[...new Set([...VITESSES, v])].sort((x, y) => x - y).map((x) => `<option value="${x}" ${x === v ? "selected" : ""}>${vitTexte(x)}</option>`).join("")}</select>
       <button class="cb vit-pas" id="a-vit-plus" aria-label="Plus vite" title="Plus vite : +0,05x (])" ${v >= VIT_MAX ? "disabled" : ""}>+</button>
     </div>`;
+  if ($("#b-pause-gen")) $("#b-pause-gen").onclick = async () => { await api.arreter_audio(); toast("Création en pause. Tu pourras la reprendre."); };
   $("#a-play").onclick = basculerLecture;
   $("#a-moins").onclick = () => sauter(-15);
   $("#a-plus").onclick = () => sauter(15);
@@ -873,11 +995,11 @@ async function changerSection(delta, jouer) {
 
 function brancherAudio() {
   const a = $("#audio");
-  a.addEventListener("loadedmetadata", () => $("#a-reste") && ($("#a-reste").textContent = "−" + fmt(a.duration - a.currentTime)));
+  a.addEventListener("loadedmetadata", () => $("#a-reste") && ($("#a-reste").textContent = "−" + fmt(resteSection())));
   a.addEventListener("timeupdate", () => {
     if (!$("#a-t")) return;
     $("#a-t").textContent = fmt(a.currentTime);
-    $("#a-reste").textContent = "−" + fmt((a.duration || 0) - a.currentTime);
+    $("#a-reste").textContent = "−" + fmt(resteSection());
     $("#a-barre").style.width = a.duration ? `${(a.currentTime / a.duration) * 100}%` : "0%";
   });
   a.addEventListener("play", () => { $("#a-play") && ($("#a-play").innerHTML = ICONES.pause); boucleSuivi(); });
@@ -911,7 +1033,7 @@ async function basculerPopVoix() {
   $$("#pop-voix [data-choisir]").forEach((d) => (d.onclick = async (ev) => {
     ev.stopPropagation();
     await api.choisir_voix(d.dataset.choisir);
-    $("#voix-nom").textContent = v.voix.find((x) => x.id === d.dataset.choisir).nom;
+    majNomVoix();
     pop.hidden = true;
     etat.audio.chargee = null;
     $("#audio").removeAttribute("src");
@@ -920,7 +1042,7 @@ async function basculerPopVoix() {
 }
 
 // ---------- lecteur (phase 3) : surlignage, défilement, clic, reprise ----------
-etat.suivi = { mots: [], blocs: {}, courant: null, mot: -1, manuelJusqua: 0, dernierSauve: 0, durees: null };
+etat.suivi = { mots: [], blocs: {}, courant: null, mot: -1, manuel: false, dernierSauve: 0, durees: null };
 
 function preparerMinutage(m) {
   const mots = [], blocs = {};
@@ -986,11 +1108,15 @@ function majSurlignage(force = false) {
   s.courant = m.bloc;
   // Défilement : garder le mot vers le milieu, sauf si l'utilisateur fait défiler lui-même.
   const mk = el.querySelector("mark"), zone = $("#zone-lecture");
-  if (mk && Date.now() > s.manuelJusqua) {
+  if (mk && !s.manuel) {
     const rz = zone.getBoundingClientRect(), rm = mk.getBoundingClientRect();
-    if (rm.top < rz.top + rz.height * 0.2 || rm.bottom > rz.top + rz.height * 0.7)
+    if (rm.top < rz.top + rz.height * 0.2 || rm.bottom > rz.top + rz.height * 0.7) {
+      s.defilAuto = Date.now();
       zone.scrollTo({ top: zone.scrollTop + (rm.top - rz.top) - rz.height * 0.38, behavior: "smooth" });
+    }
   }
+  majBoutonRevenir();
+  if (etat.vueLecture === "page") majPageLue(m);
   if (!a.paused && Date.now() - s.dernierSauve > 5000) sauverPosition();
 }
 
@@ -1004,12 +1130,189 @@ function boucleSuivi() {
   if (!a.paused) requestAnimationFrame(boucleSuivi);
 }
 
+// Quand je fais défiler moi-même, le texte arrête de suivre la voix et un bouton apparaît
+// (flèche vers le haut ou vers le bas selon où se trouve le mot lu) pour y revenir.
+function majBoutonRevenir() {
+  const s = etat.suivi, b = $("#b-revenir"), a = $("#audio");
+  if (!b) return;
+  const zone = etat.vueLecture === "page" ? $("#zone-page") : $("#zone-lecture");
+  const cible = etat.vueLecture === "page" ? $("#page-scan .mot-lu") : $("#page-lecture mark");
+  if (!s.manuel || !cible || (a.paused && !s.courant)) { b.hidden = true; return; }
+  const rz = zone.getBoundingClientRect(), rc = cible.getBoundingClientRect();
+  const visible = rc.bottom > rz.top + 20 && rc.top < rz.bottom - 20;
+  if (visible) {
+    // Le mot lu est revenu à l'écran : on reprend le suivi tout seul.
+    if (rc.top > rz.top + rz.height * 0.15 && rc.bottom < rz.top + rz.height * 0.85) s.manuel = false;
+    b.hidden = true;
+    return;
+  }
+  const enHaut = rc.bottom <= rz.top;
+  b.classList.toggle("haut", enHaut);
+  b.querySelector(".fl-r").textContent = enHaut ? "↑" : "↓";
+  b.hidden = false;
+}
+
+// ---------- vue « Page » : le scan réel, le mot lu encadré, les pages qui tournent toutes seules ----------
+etat.pageVue = { n: null, cache: new Map(), positions: new Map(), attente: null };
+
+function vuePagePossible() {
+  const l = etat.livre;
+  return !!(l && l.pages && l.pages.length && (!l.meta || !l.meta.type || l.meta.type === "pdf"));
+}
+
+function choisirVueLecture(v) {
+  etat.vueLecture = v;
+  sauverReglages({ vue_lecture: v });
+  etat.suivi.manuel = false;
+  appliquerVueLecture();
+}
+
+function appliquerVueLecture() {
+  const possible = vuePagePossible();
+  $("#vues").hidden = !possible;
+  const v = possible ? etat.vueLecture || "texte" : "texte";
+  $$("#vues button").forEach((b) => b.classList.toggle("on", b.dataset.vue === v));
+  $("#zone-lecture").hidden = v !== "texte";
+  $("#zone-page").hidden = v !== "page";
+  $("#b-revenir").hidden = true;
+  if (v === "page") afficherPageScan(pageCourante());
+  else majSurlignage(true);
+}
+
+function pageCourante() {
+  const l = etat.livre, s = etat.section;
+  if (!l || !s) return null;
+  const id = etat.suivi.courant;
+  const b = (id && s.blocs.find((x) => x.id === id)) || s.blocs.find((x) => x.page);
+  return b ? b.page : l.pages[0];
+}
+
+async function afficherPageScan(n) {
+  const l = etat.livre, pv = etat.pageVue;
+  if (!n) { $("#page-scan").innerHTML = `<div class="vide">Pas de page scannée pour cette section.</div>`; return; }
+  pv.n = n;
+  const i = l.pages.indexOf(n);
+  $("#pg-num").textContent = `p. ${n} · ${i + 1}/${l.pages.length}`;
+  $("#pg-prec").disabled = i <= 0;
+  $("#pg-suiv").disabled = i < 0 || i >= l.pages.length - 1;
+  const cle = l.id + "|" + n;
+  let r = pv.cache.get(cle);
+  if (!r) {
+    if (!$("#page-scan img")) $("#page-scan").innerHTML = `<div class="vide">Chargement de la page…</div>`;
+    r = await api.page(l.id, n, 1400);
+    pv.cache.set(cle, r);
+    if (pv.cache.size > 10) pv.cache.delete(pv.cache.keys().next().value);
+  }
+  if (pv.n !== n || etat.livre !== l) return;
+  if (r.erreur || !r.image) { $("#page-scan").innerHTML = `<div class="vide">${echap(r.erreur || "Page introuvable.")}</div>`; return; }
+  $("#page-scan").innerHTML = `<img src="${r.image}" alt="Page ${n} du livre">`;
+  majSurlignage(true);
+  // La page suivante se prépare d'avance : elle tourne sans attente.
+  const suiv = l.pages[i + 1], cs = l.id + "|" + suiv;
+  if (suiv && !pv.cache.has(cs)) api.page(l.id, suiv, 1400).then((x) => pv.cache.set(cs, x));
+}
+
+function feuilleter(delta) {
+  const l = etat.livre, pv = etat.pageVue, i = l.pages.indexOf(pv.n);
+  const n = l.pages[Math.min(l.pages.length - 1, Math.max(0, i + delta))];
+  if (!n || n === pv.n) return;
+  etat.suivi.manuel = true;
+  afficherPageScan(n);
+  setTimeout(majBoutonRevenir, 300);
+}
+
+async function majPageLue(m) {
+  const pv = etat.pageVue;
+  if (!m || !etat.livre) return;
+  let pos = pv.positions.get(m.bloc);
+  if (!pos) {
+    if (pv.attente === m.bloc) return;
+    pv.attente = m.bloc;
+    pos = await api.positions_bloc(etat.livre.id, m.bloc);
+    pv.positions.set(m.bloc, pos);
+    pv.attente = null;
+  }
+  const scan = $("#page-scan");
+  if (!pos.mots.length) {
+    const b = etat.section && etat.section.blocs.find((x) => x.id === m.bloc);
+    if (b && b.page && b.page !== pv.n && !etat.suivi.manuel) afficherPageScan(b.page);
+    scan.querySelectorAll(".mot-lu, .ligne-lue").forEach((x) => x.remove());
+    return;
+  }
+  let w = pos.mots[0];
+  for (const x of pos.mots) { if (x.a <= m.a) w = x; else break; }
+  if (w.p !== pv.n) {
+    if (!etat.suivi.manuel) afficherPageScan(w.p);  // la page tourne toute seule
+    return;
+  }
+  if (!scan.querySelector("img")) return;
+  const [L, H] = pos.pages[w.p] || [1, 1];
+  let box = scan.querySelector(".mot-lu"), ligne = scan.querySelector(".ligne-lue");
+  if (!ligne) { ligne = document.createElement("div"); ligne.className = "ligne-lue"; scan.appendChild(ligne); }
+  if (!box) { box = document.createElement("div"); box.className = "mot-lu"; scan.appendChild(box); }
+  const [x0, y0, x1, y1] = w.r, marge = 1.5;
+  box.style.cssText = `left:${((x0 - marge) / L) * 100}%;top:${((y0 - marge) / H) * 100}%;width:${((x1 - x0 + 2 * marge) / L) * 100}%;height:${((y1 - y0 + 2 * marge) / H) * 100}%`;
+  ligne.style.cssText = `top:${((y0 - 3) / H) * 100}%;height:${((y1 - y0 + 6) / H) * 100}%`;
+  if (!etat.suivi.manuel) {
+    const zone = $("#zone-page"), rz = zone.getBoundingClientRect(), rb = box.getBoundingClientRect();
+    if (rb.top < rz.top + rz.height * 0.15 || rb.bottom > rz.top + rz.height * 0.75)
+      zone.scrollTo({ top: zone.scrollTop + (rb.top - rz.top) - rz.height * 0.4, behavior: "smooth" });
+  }
+}
+
+// Clic sur un mot de la page scannée : la lecture part de là.
+async function clicPageScan(e) {
+  const img = e.target.closest("#page-scan img");
+  if (!img) return;
+  if (!sectionPrete()) { toast("Crée d'abord l'audio pour cliquer dans la page."); return; }
+  if (!(await chargerAudioSection(false))) return;
+  const pv = etat.pageVue, r = img.getBoundingClientRect();
+  const fx = (e.clientX - r.left) / r.width, fy = (e.clientY - r.top) / r.height;
+  let meilleur = null;
+  for (const id of Object.keys(etat.suivi.blocs)) {
+    const b = etat.section.blocs.find((x) => x.id === id);
+    if (!b || !b.page || (b.page !== pv.n && b.page !== pv.n - 1)) continue;
+    let pos = pv.positions.get(id);
+    if (!pos) { pos = await api.positions_bloc(etat.livre.id, id); pv.positions.set(id, pos); }
+    const [L, H] = pos.pages[pv.n] || [1, 1];
+    for (const w of pos.mots) {
+      if (w.p !== pv.n) continue;
+      const cx = (w.r[0] + w.r[2]) / 2 / L, cy = (w.r[1] + w.r[3]) / 2 / H;
+      const d = Math.abs(cx - fx) + 4 * Math.abs(cy - fy);
+      if (!meilleur || d < meilleur.d) meilleur = { d, id, a: w.a };
+    }
+  }
+  if (!meilleur || meilleur.d > 0.08) { toast("Clique sur un mot du texte lu."); return; }
+  const mot = etat.suivi.mots.find((m) => m.bloc === meilleur.id && m.a >= meilleur.a);
+  if (!mot) return;
+  const a = $("#audio");
+  a.currentTime = Math.max(0, mot.t - 0.05);
+  etat.suivi.manuel = false;
+  try { await a.play(); } catch (err) { /* refusé */ }
+}
+
+function revenirALecture() {
+  const s = etat.suivi;
+  s.manuel = false;
+  $("#b-revenir").hidden = true;
+  if (etat.vueLecture === "page" && etat.pageVue.n !== pageCourante()) afficherPageScan(pageCourante());
+  const cible = etat.vueLecture === "page" ? $("#page-scan .mot-lu") : $("#page-lecture mark") || $(`#page-lecture .lu-bloc[data-id="${s.courant}"]`);
+  if (cible) cible.scrollIntoView({ block: "center", behavior: "smooth" });
+  majSurlignage(true);
+}
+
 function brancherSuivi() {
   const zone = $("#zone-lecture");
-  const manuel = () => (etat.suivi.manuelJusqua = Date.now() + 5000);
-  zone.addEventListener("wheel", manuel, { passive: true });
-  zone.addEventListener("touchmove", manuel, { passive: true });
-  zone.addEventListener("mousedown", (e) => { if (e.target === zone) manuel(); });
+  const manuel = () => { etat.suivi.manuel = true; setTimeout(majBoutonRevenir, 50); };
+  for (const z of [zone, $("#zone-page")]) {
+    z.addEventListener("wheel", manuel, { passive: true });
+    z.addEventListener("touchmove", manuel, { passive: true });
+    z.addEventListener("mousedown", (e) => { if (e.target === z) manuel(); });
+    z.addEventListener("keydown", (e) => { if (["PageUp", "PageDown", "Home", "End", "ArrowUp", "ArrowDown"].includes(e.key)) manuel(); });
+    z.addEventListener("scroll", () => { if (etat.suivi.manuel) majBoutonRevenir(); }, { passive: true });
+  }
+  $("#b-revenir").onclick = revenirALecture;
+  $("#page-scan").addEventListener("click", clicPageScan);
   // Clic sur une phrase : la lecture part du début de cette phrase.
   $("#page-lecture").addEventListener("click", async (e) => {
     const el = e.target.closest(".lu-bloc");
@@ -1028,7 +1331,7 @@ function brancherSuivi() {
     const cible = mots.find((m) => m.a >= p0) || mots[0];
     const a = $("#audio");
     a.currentTime = cible ? Math.max(0, cible.t - 0.05) : (etat.suivi.blocs[el.dataset.id] || { debut: 0 }).debut;
-    etat.suivi.manuelJusqua = 0;
+    etat.suivi.manuel = false;
     try { await a.play(); } catch (err) { /* refusé */ }
   });
 }
@@ -1077,6 +1380,7 @@ function majProgression(complet = true) {
     const avant = d.slice(0, i).reduce((x, y) => x + y, 0) + (a.currentTime || 0);
     pc = total ? avant / total : 0;
     reste = (total - avant) / (a.playbackRate || 1);  // temps réel d'écoute à la vitesse choisie
+    etat.suivi.dureeRestanteLivre = reste;
   } else pc = (i + (a.duration ? a.currentTime / a.duration : 0)) / l.sections.length;
   pc = Math.min(pc, 0.999);  // jamais 100 % avant la fin
   $("#livre-progres").style.width = `${pc > 0 ? Math.max(1, pc * 100) : 0}%`;
@@ -1225,7 +1529,8 @@ function dessinerCopie() {
 
 // ---------- réglages (phase 4) ----------
 const RACCOURCIS = [["Espace", "Lecture / pause"], ["← / →", "Reculer / avancer de 15 s"], ["Ctrl + ← / →", "Section précédente / suivante"],
-  ["[ / ]", "Moins vite / plus vite (par 0,05x)"], ["Clic sur une phrase", "Lire à partir de cette phrase"], ["Ctrl + O", "Importer un livre"],
+  ["[ / ]", "Moins vite / plus vite (par 0,05x)"], ["T / P", "Afficher le texte / la page réelle du livre"],
+  ["Clic sur une phrase", "Lire à partir de cette phrase (aussi sur la page)"], ["Ctrl + O", "Importer un livre"],
   ["Ctrl + V", "Coller une capture, une adresse web ou un texte"], ["Ctrl + J", "Mode jour / nuit"], ["PgPréc / PgSuiv", "Page précédente / suivante (aperçu)"],
   ["Ctrl + ,", "Réglages"], ["Échap", "Fermer"]];
 
@@ -1249,7 +1554,7 @@ async function ouvrirReglages() {
       <span class="petit">Jamais signalés « à vérifier ». ✕ = les signaler de nouveau.</span>
       <div class="memo-l">${r.ignores.map((m) => `<span class="memo">${echap(m)}<button data-oublier-m="${echap(m)}" title="Le signaler de nouveau">✕</button></span>`).join("") || '<span class="petit">Aucun.</span>'}</div></div>
     ${l ? `<div class="reg"><div class="reg-l1"><b>Livre ouvert : ${echap(l.titre)}</b><button class="pil" id="reg-suppr">Mettre ce livre à la corbeille</button></div>
-      <span class="petit">Le livre, son audio et ses corrections vont dans la corbeille Windows (récupérables). Ton PDF d'origine n'est jamais touché.</span></div>` : ""}
+      <span class="petit">Aussi par le bouton ⋯ (ou le clic droit) sur un livre de la bibliothèque. Ton PDF d'origine n'est jamais touché.</span></div>` : ""}
     <div class="reg"><b>Raccourcis clavier</b><div class="raccourcis" style="margin-top:6px">${RACCOURCIS.map(([k, v]) => `<kbd>${k}</kbd><span>${v}</span>`).join("")}</div></div>`;
   $("#reglages").hidden = false;
   $("#reg-donnees").onclick = () => api.ouvrir_donnees();
@@ -1261,19 +1566,7 @@ async function ouvrirReglages() {
     toast(`${x.fichiers} fichiers mis à la corbeille (${mo(x.octets)} libérés).`);
     ouvrirReglages();
   };
-  if ($("#reg-suppr")) $("#reg-suppr").onclick = async (ev) => {
-    const b = ev.currentTarget;
-    if (!b.dataset.confirme) { b.dataset.confirme = "1"; b.textContent = "Confirmer : à la corbeille"; b.classList.add("ok"); return; }
-    $("#audio").pause();
-    await api.supprimer(l.id);
-    etat.livre = null;
-    $("#reglages").hidden = true;
-    $("#carte-livre").hidden = true; $("#sections").innerHTML = ""; $("#lab-sections").hidden = true;
-    $("#b-apercu").disabled = true; $("#b-usb").disabled = true;
-    afficherVue("accueil");
-    await chargerLivres();
-    toast("Livre mis à la corbeille Windows (récupérable).");
-  };
+  if ($("#reg-suppr")) $("#reg-suppr").onclick = () => { $("#reglages").hidden = true; mettreLivreCorbeille(l.id, l.titre); };
 }
 
 // ---------- démarrage ----------
@@ -1352,12 +1645,13 @@ function brancher() {
       else if (e.key === "ArrowRight" && e.ctrlKey) { e.preventDefault(); changerSection(1, !a.paused); }
       else if (e.key === "ArrowLeft") { e.preventDefault(); sauter(-15); }
       else if (e.key === "ArrowRight") { e.preventDefault(); sauter(15); }
-      else if (e.key === "[" || e.key === "]") {
-        const x = regleVitesse((etat.reglages.vitesse || 1) + (e.key === "]" ? VIT_PAS : -VIT_PAS));
-        toast(`Vitesse ${vitTexte(x)}`);
-      }
+      else if (e.key === "[" || e.key === "]") regleVitesse((etat.reglages.vitesse || 1) + (e.key === "]" ? VIT_PAS : -VIT_PAS));
+      else if (!e.ctrlKey && (e.key === "t" || e.key === "p") && vuePagePossible()) choisirVueLecture(e.key === "p" ? "page" : "texte");
     }
   });
+  $$("#vues button").forEach((b) => (b.onclick = () => choisirVueLecture(b.dataset.vue)));
+  $("#pg-prec").onclick = () => feuilleter(-1);
+  $("#pg-suiv").onclick = () => feuilleter(1);
 }
 
 async function demarrer() {
@@ -1366,6 +1660,7 @@ async function demarrer() {
   etat.reglages = (await api.reglages()) || {};
   appliquerTheme(etat.reglages.theme || "jour");
   etat.mode = etat.reglages.mode || "mixte";
+  etat.vueLecture = etat.reglages.vue_lecture || "texte";
   brancher();
   majNomVoix();
   await chargerLivres();

@@ -48,8 +48,8 @@ L'app n'a pas besoin des droits d'administrateur.
 
 ## 6. Lancer l'app
 
-1. Double-clique sur **`Lecteur.bat`**.
-2. Pour l'avoir sur le bureau : clic droit sur `Lecteur.bat` → **Afficher d'autres options** → **Envoyer vers** → **Bureau (créer un raccourci)**.
+1. `installer.bat` a créé un raccourci **Lecteur** sur ton Bureau, avec son icône (livre doré sur fond bleu). Double-clique dessus.
+2. Tu peux aussi double-cliquer sur **`Lecteur.bat`** dans le dossier de l'app.
 
 ---
 

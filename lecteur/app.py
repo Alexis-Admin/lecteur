@@ -3,6 +3,7 @@ from __future__ import annotations
 
 import asyncio
 import base64
+import difflib
 import json
 import os
 import re
@@ -37,6 +38,7 @@ class Api:
         self._livres: dict[str, Livre] = {}
         self._generation: dict | None = None  # création d'audio en cours
         self._export: dict | None = None  # copie sur clé USB en cours
+        self._positions: dict[tuple[str, str], dict] = {}  # vue « Page » : mots d'un bloc sur le scan
 
     # --- utilitaires -------------------------------------------------------
     def _js(self, code: str) -> None:
@@ -54,6 +56,7 @@ class Api:
     def _sauver(self, livre: Livre) -> None:
         with self._verrou:
             bibliotheque.enregistrer(livre)
+        self._positions = {k: v for k, v in self._positions.items() if k[0] != livre.id}  # texte changé
 
     # --- application -------------------------------------------------------
     def infos(self) -> dict:
@@ -262,6 +265,58 @@ class Api:
                         if not cible.startswith(concat):
                             break
             return {"largeur": page.rect.width, "hauteur": page.rect.height, "rects": rects[:6]}
+
+    def positions_bloc(self, livre_id: str, bloc_id: str) -> dict:
+        """Où se trouve chaque mot d'un bloc sur le scan (vue « Page » : le mot lu y est encadré).
+
+        Les mots du bloc sont alignés sur ceux de sa page (et de la suivante, s'il continue) : un mot corrigé
+        ou recollé prend la place de son voisin le plus proche. {"pages": {n: [L, H]}, "mots": [{a, b, p, r}]}
+        """
+        cle = (livre_id, bloc_id)
+        if cle in self._positions:
+            return self._positions[cle]
+        m = bibliotheque.meta(livre_id)
+        livre = self._livre(livre_id)
+        b = livre.bloc(bloc_id)
+        chemin = m.get("chemin_source", "")
+        res: dict = {"pages": {}, "mots": []}
+        if b is None or not b.page or m.get("type", "pdf") != "pdf" or not chemin or not Path(chemin).exists():
+            return res
+
+        def norme(t: str) -> str:
+            return re.sub(r"[^\wÀ-ÿ]", "", t).lower()
+
+        jetons = [(x.start(), x.end(), norme(x.group(0))) for x in re.finditer(r"[\wÀ-ÿ’'\-]+", b.texte)]
+        mots_page: list[tuple[str, int, list[float]]] = []
+        with pymupdf.open(chemin) as doc:
+            for p in (b.page, b.page + 1):
+                if 1 <= p <= len(doc):
+                    page = doc[p - 1]
+                    res["pages"][p] = [page.rect.width, page.rect.height]
+                    for w in mots_de_page(page, p):
+                        if w.texte.strip():
+                            mots_page.append((norme(w.texte), p, [w.x0, w.y0, w.x1, w.y1]))
+        if not jetons or not mots_page:
+            return res
+        sm = difflib.SequenceMatcher(None, [j[2] for j in jetons], [w[0] for w in mots_page], autojunk=False)
+        trouve: dict[int, int] = {}
+        for bloc_m in sm.get_matching_blocks():
+            for k in range(bloc_m.size):
+                trouve[bloc_m.a + k] = bloc_m.b + k
+        precedent = None
+        for i, (a, z, _) in enumerate(jetons):
+            j = trouve.get(i, precedent)
+            if j is None:
+                j = next((trouve[k] for k in range(i, len(jetons)) if k in trouve), None)
+            if j is None:
+                continue
+            precedent = j
+            _, p, r = mots_page[j]
+            res["mots"].append({"a": a, "b": z, "p": p, "r": r, "exact": i in trouve})
+        if len(self._positions) > 400:
+            self._positions.clear()
+        self._positions[cle] = res
+        return res
 
     def modifier_bloc(self, livre_id: str, bloc_id: str, texte: str) -> bool:
         livre = self._livre(livre_id)
@@ -554,6 +609,43 @@ class Api:
         return False
 
 
+def identite_windows() -> None:
+    """Identité propre à Lecteur dans la barre des tâches (sinon Windows le regroupe avec « Python »)."""
+    try:
+        import ctypes
+
+        ctypes.windll.shell32.SetCurrentProcessExplicitAppUserModelID("Alexis.Lecteur")
+    except Exception:  # noqa: BLE001 - autre système que Windows
+        pass
+
+
+def appliquer_icone(titre: str) -> None:
+    """Met l'icône de Lecteur sur la fenêtre et dans la barre des tâches (pywebview garde celle de Python)."""
+    try:
+        import ctypes
+
+        from .icone import chemin_icone
+
+        from ctypes import wintypes
+
+        u = ctypes.windll.user32
+        # Types 64 bits explicites : sinon les poignées sont tronquées et rien ne s'affiche.
+        u.FindWindowW.restype = wintypes.HWND
+        u.LoadImageW.restype = wintypes.HANDLE
+        u.LoadImageW.argtypes = [wintypes.HINSTANCE, wintypes.LPCWSTR, wintypes.UINT, ctypes.c_int, ctypes.c_int, wintypes.UINT]
+        u.SendMessageW.argtypes = [wintypes.HWND, wintypes.UINT, wintypes.WPARAM, wintypes.LPARAM]
+        hwnd = u.FindWindowW(None, titre)
+        if not hwnd:
+            return
+        f = str(chemin_icone())
+        for taille, quel in ((32, 1), (16, 0)):  # ICON_BIG = 1, ICON_SMALL = 0
+            h = u.LoadImageW(None, f, 1, taille, taille, 0x10)  # IMAGE_ICON, LR_LOADFROMFILE
+            if h:
+                u.SendMessageW(hwnd, 0x80, quel, h)  # WM_SETICON
+    except Exception:  # noqa: BLE001 - l'icône est un plus, jamais une raison de ne pas démarrer
+        pass
+
+
 def lancer() -> None:
     api = Api()
     r = bibliotheque.reglages()
@@ -571,5 +663,7 @@ def lancer() -> None:
             pass
 
     fen.events.closing += fermeture
+    fen.events.shown += lambda: appliquer_icone("Lecteur")
+    identite_windows()
     webview.start(debug=bool(json.loads(str(r.get("debug", "false")).lower())), private_mode=False,
                   storage_path=str(bibliotheque.racine() / "webview"))

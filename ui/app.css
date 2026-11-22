@@ -75,6 +75,32 @@ svg { width: 15px; height: 15px; fill: none; stroke: currentColor; stroke-width:
 /* Un seul point doré dans la barre : le livre ouvert est marqué par un contour, la section par l'aplat. */
 #livres .sec.actif { background: var(--side-survol); box-shadow: inset 0 0 0 1px var(--accent-vif); color: var(--side-fort); }
 #livres .sec.actif .n, #livres .sec.actif .d { color: var(--accent-vif); }
+/* Ligne d'un livre : le bouton ⋯ apparaît au survol (et reste accessible au clavier) */
+.livre-l { position: relative; display: flex; align-items: center; }
+.livre-l .sec { flex: 1 1 auto; min-width: 0; }
+.livre-menu { position: absolute; right: 4px; width: 26px; height: 24px; border: none; border-radius: 6px; background: var(--side); color: var(--side-fort);
+  font-size: 16px; line-height: 1; opacity: 0; cursor: pointer; transition: opacity .12s; }
+.livre-l:hover .livre-menu, .livre-menu:focus-visible { opacity: 1; }
+.livre-menu:hover { background: var(--side-survol); }
+.livre-l:hover .sec .d { visibility: hidden; }
+/* Menu contextuel et petites fenêtres de confirmation */
+.menu-ctx { position: fixed; z-index: 60; min-width: 220px; padding: 6px; border-radius: 12px; background: var(--carte); color: var(--texte);
+  border: 1px solid var(--filet); box-shadow: 0 12px 32px rgba(0,0,0,.22); display: flex; flex-direction: column; }
+.menu-ctx button { text-align: left; height: 32px; padding: 0 12px; border: none; border-radius: 8px; background: none; color: inherit; font-size: 13px; cursor: pointer; }
+.menu-ctx button:hover, .menu-ctx button:focus-visible { background: var(--phrase-survol); outline: none; }
+.menu-ctx .danger { color: #C4271F; }
+body[data-theme="nuit"] .menu-ctx .danger { color: #FF8A80; }
+.menu-ctx hr { border: none; border-top: 1px solid var(--filet); margin: 4px 6px; }
+.dlg-fond { position: fixed; inset: 0; z-index: 70; background: rgba(10, 14, 24, .45); display: flex; align-items: center; justify-content: center; animation: fondu .15s; }
+.dlg { width: min(440px, calc(100vw - 32px)); background: var(--carte); color: var(--texte); border-radius: 16px; padding: 20px 22px 18px;
+  box-shadow: 0 24px 60px rgba(0,0,0,.3); display: flex; flex-direction: column; gap: 10px; }
+.dlg h3 { margin: 0; font-size: 16px; }
+.dlg p { margin: 0; font-size: 13.5px; line-height: 1.5; color: var(--texte2); }
+.dlg-champ { height: 36px; border-radius: 10px; border: 1px solid var(--filet); background: var(--fond); color: var(--texte); padding: 0 12px; font: inherit; font-size: 14px; }
+.dlg-acts { display: flex; justify-content: flex-end; gap: 8px; margin-top: 6px; }
+.dlg-acts .pil { height: 36px; padding: 0 16px; font-size: 13px; }
+.prim.danger { background: #C4271F; color: #fff; }
+@keyframes fondu { from { opacity: 0; } to { opacity: 1; } }
 .outils { margin-top: auto; padding-top: 14px; display: flex; gap: 6px; }
 .btn-side { flex: 1 1 0; height: 34px; border-radius: 999px; border: 1px solid var(--side-filet); background: transparent; color: var(--side-t);
   display: flex; align-items: center; justify-content: center; gap: 6px; font-size: 12.5px; transition: background .15s; }
@@ -156,6 +182,33 @@ body[data-theme="nuit"] .page .ph.cours { color: #FFFFFF; }
 .gen .l1 { display: flex; justify-content: space-between; gap: 8px; font-size: 12.5px; color: var(--lecteur-doux); }
 .gen .l1 b { color: var(--lecteur-t); font-weight: 600; }
 .gen .rail { background: rgba(255,255,255,.14); }
+/* Création du reste du livre pendant l'écoute : une ligne fine au-dessus des boutons */
+.gen-mini { flex: 1 0 100%; position: relative; display: flex; align-items: center; gap: 10px; font-size: 11.5px; color: var(--lecteur-doux);
+  padding-bottom: 8px; margin-bottom: -2px; border-bottom: 1px solid rgba(255,255,255,.1); }
+.gen-mini i { position: absolute; left: 0; bottom: -1px; height: 2px; background: var(--accent-vif); border-radius: 2px; transition: width .4s; }
+.gen-mini span { flex: 1; } .gen-mini .lien { color: var(--lecteur-t); font-size: 11.5px; }
+/* Corps de la lecture : texte ou page, et bouton pour revenir au mot lu */
+.lecture-corps { flex: 1 1 auto; min-height: 0; position: relative; display: flex; flex-direction: column; }
+.revenir { position: absolute; left: 50%; transform: translateX(-50%); bottom: 14px; z-index: 5; display: inline-flex; align-items: center; gap: 8px;
+  height: 36px; padding: 0 16px; border-radius: 999px; border: none; background: var(--lecteur); color: var(--lecteur-t); font-size: 13px; font-weight: 500;
+  box-shadow: 0 6px 20px rgba(0,0,0,.25); cursor: pointer; animation: apparait .2s ease-out; }
+.revenir.haut { bottom: auto; top: 10px; }
+.revenir .fl-r { color: var(--accent-vif); font-size: 15px; }
+.revenir:hover { filter: brightness(1.15); }
+@keyframes apparait { from { opacity: 0; transform: translate(-50%, 6px); } to { opacity: 1; transform: translate(-50%, 0); } }
+.seg-vue button { display: inline-flex; align-items: center; gap: 6px; }
+.seg-vue svg { width: 14px; height: 14px; fill: none; stroke: currentColor; stroke-width: 2; stroke-linecap: round; flex: none; }
+/* Vue « Page » : le scan réel, le mot lu encadré */
+.zone-page { display: flex; flex-direction: column; align-items: center; gap: 8px; }
+.page-nav { flex: none; display: flex; align-items: center; gap: 6px; font-size: 12.5px; color: var(--texte2); }
+.page-nav .cb { color: var(--texte); border: 1px solid var(--filet); width: 30px; height: 30px; font-size: 16px; }
+.page-nav .cb:hover { background: var(--phrase-survol); }
+.page-scan { flex: none; position: relative; width: min(100%, 860px); background: var(--carte); border: 1px solid var(--papier-filet); border-radius: 12px; overflow: hidden; }
+.page-scan img { display: block; width: 100%; height: auto; }
+body[data-theme="nuit"] .page-scan img { filter: brightness(.88) contrast(1.05); }
+.page-scan .mot-lu { position: absolute; border-radius: 3px; background: rgba(255, 212, 59, .45); box-shadow: 0 0 0 2px #E39A0B; transition: all .12s linear; pointer-events: none; }
+.page-scan .ligne-lue { position: absolute; left: 0; right: 0; background: rgba(201, 164, 106, .16); pointer-events: none; transition: top .12s linear, height .12s linear; }
+.page-scan .vide { padding: 40px; text-align: center; color: var(--texte2); font-size: 14px; }
 .ctl { display: flex; align-items: center; gap: 4px; }
 .cb { width: 36px; height: 36px; border-radius: 999px; border: none; background: transparent; color: inherit; display: inline-flex; align-items: center; justify-content: center;
   font-family: "JetBrains Mono", monospace; font-size: 12px; font-weight: 500; transition: background .15s; }

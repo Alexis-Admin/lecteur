@@ -1,5 +1,15 @@
 # Notes de version — Lecteur
 
+## 1.2.0 — 21 novembre 2026
+
+- **Vue « Page »** : bascule entre le texte et la page réelle du livre (scan). Le mot lu y est encadré, la ligne est teintée et les pages tournent toutes seules ; un clic sur un mot de la page fait partir la lecture de là. Touches T et P.
+- **« Revenir à la lecture »** : quand tu fais défiler toi-même, le texte arrête de te suivre et un bouton (flèche vers le haut ou vers le bas) te ramène au mot lu. Le suivi reprend aussi tout seul si tu y reviens.
+- **Lecteur toujours disponible pendant la création de l'audio** : une petite ligne montre la progression du reste du livre, les boutons Lecture/Pause restent là.
+- **Temps restant à ta vitesse** : la section et le livre, recalculés quand tu changes la vitesse.
+- **Bibliothèque** : bouton ⋯ (ou clic droit) sur chaque livre : ouvrir, aperçu, renommer, mettre à la corbeille, avec une vraie fenêtre de confirmation.
+- **Icône Lecteur** dans la fenêtre et la barre des tâches ; `installer.bat` crée un raccourci sur le Bureau avec cette icône.
+- Le nom de la voix affiche sa langue (fr-CA, en-CA…).
+
 ## 1.1.0 — 21 novembre 2026
 
 Audit sur 15 livres différents (romans, essais, Bibles, commentaires, livres en anglais).
