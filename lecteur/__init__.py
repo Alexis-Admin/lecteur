@@ -1,3 +1,3 @@
 """Lecteur — transforme des livres (PDF, captures, textes) en audio avec surlignage mot à mot."""
 
-__version__ = "1.0.1"
+__version__ = "1.1.0"

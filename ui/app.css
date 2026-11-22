@@ -254,6 +254,10 @@ body[data-theme="nuit"] .page .ph.cours { color: #FFFFFF; }
 .rev-tete { display: flex; align-items: center; justify-content: space-between; gap: 8px; }
 .rev-tete .lab-c { letter-spacing: .12em; white-space: nowrap; }
 .rev-tete .lien { white-space: nowrap; font-size: 12px; }
+.noms-l { display: flex; flex-wrap: wrap; gap: 5px; max-height: 180px; overflow: auto; }
+.nom-p { border: 1px solid var(--filet); background: var(--carte); color: var(--texte); border-radius: 999px; padding: 3px 10px; font: 13px Newsreader, Georgia, serif; cursor: pointer; }
+.nom-p:hover { border-color: var(--texte); background: var(--douteux); color: var(--douteux-t); }
+.rev-facultatif { border-top: 1px dashed var(--filet); padding-top: 10px; margin-top: 4px; }
 .rev-choix { font-size: 11.5px; color: var(--texte2); margin-right: 2px; }
 .vit-pas { width: 30px; height: 30px; border-radius: 999px; font-size: 18px; font-weight: 500; }
 .aide { font-size: 12px; line-height: 1.45; color: var(--texte2); margin: 0; }
@@ -267,7 +271,17 @@ body[data-theme="nuit"] .page .ph.cours { color: #FFFFFF; }
 .ch-l .ap { color: var(--auto); font-weight: 600; }
 .ch-l .fl { color: var(--texte2); }
 .ch-l .ou { margin-left: auto; white-space: nowrap; font-size: 11.5px; color: var(--texte2); text-decoration: underline dotted; cursor: pointer; }
-.ch-ctx { font-family: Newsreader, Georgia, serif; font-size: 12.5px; color: var(--texte2); line-height: 1.35; }
+.ch-ctx { font-family: Newsreader, Georgia, serif; font-size: 12.5px; color: var(--texte2); line-height: 1.35; cursor: pointer; }
+.ch-ctx:hover, .item .ctx:hover { color: var(--texte); }
+/* Mot à vérifier montré sur place : cadre jaune vif sur le scan, mot surligné dans le texte */
+.mot-cible { position: absolute; border: 2px solid #E39A0B; background: rgba(255, 212, 59, .45); border-radius: 3px;
+  box-shadow: 0 0 0 3px rgba(255, 212, 59, .35); animation: cible 1.2s ease-out 2; pointer-events: none; margin: -2px; padding: 2px; box-sizing: content-box; }
+@keyframes cible { 0% { box-shadow: 0 0 0 14px rgba(255, 212, 59, .0), 0 0 0 0 rgba(227, 154, 11, .6); } 100% { box-shadow: 0 0 0 3px rgba(255, 212, 59, .35); } }
+#ap-texte mark.douteux.cible { background: #FFD43B; color: #1E2433; outline: 2px solid #E39A0B; outline-offset: 1px; animation: cible 1.2s ease-out 2; }
+#ap-texte .bloc.cible { box-shadow: 0 0 0 2px #E39A0B; }
+/* Modifier le texte : un seul cadre autour du bloc, pas un cadre par ligne */
+#ap-texte .corps:focus-visible { outline: none; }
+#ap-texte .bloc:focus-within { background: var(--carte); box-shadow: 0 0 0 1.5px var(--accent-vif); }
 .ch-ctx b { font-weight: 600; color: var(--texte); }
 .rev-sur .prim, .rev-suite { width: 100%; justify-content: center; }
 .memo-l { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 6px; }

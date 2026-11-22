@@ -83,6 +83,33 @@ def propositions(mot: str, raison_: str, noms: Counter, ignores: set[str]) -> tu
     if colle and (connu(colle.group(1), ignores) or colle.group(1) in noms):
         props.append(f"{colle.group(1)} à")
         sur = True
+    # 1 bis. Deux mots collés par le scan (« lesfilles », « quandje ») : un petit mot courant + un vrai mot.
+    # Jamais pour un mot à trait d'union (« semi-liberté », « e-mail ») ni quand un accent suffit
+    # (« defaire » → « défaire », pas « de faire »).
+    dico_tot = suggestions(coeur)
+    accent_seul = any(_sans_accents(x) == _sans_accents(coeur) for x in dico_tot)
+    if not props and "-" not in coeur and not accent_seul:
+        for i in range(2, len(coeur) - 1):
+            gauche, droite = coeur[:i], coeur[i:]
+            if gauche.lower() in _PETITS_MOTS_AVANT and len(droite) >= 3 and connu(droite, ignores):
+                props.append(f"{gauche} {droite}")
+                sur = True
+                break
+        else:
+            for i in range(4, len(coeur) - 1):  # « chefde » oui, « merde » → « mer de » non
+                gauche, droite = coeur[:i], coeur[i:]
+                if droite.lower() in _PETITS_MOTS_APRES and connu(gauche, ignores):
+                    props.append(f"{gauche} {droite}")
+                    sur = True
+                    break
+    # 1 ter. Majuscule sans accent en début de phrase (« Etes-vous » → « Êtes-vous », « Ecoute » → « Écoute »).
+    if not props and coeur[:1] in "EAIOU":
+        for acc in {"E": "ÉÈÊ", "A": "ÀÂ", "I": "Î", "O": "Ô", "U": "Ù"}[coeur[0]]:
+            essai = acc + coeur[1:]
+            if connu(essai, ignores) or connu(essai.lower(), ignores):
+                props.append(essai)
+                sur = True
+                break
     # 2. Noms du livre qui ressemblent (« Metüshélah » → « Methushélah »).
     if coeur[:1].isupper():
         proches = difflib.get_close_matches(coeur, [n for n in noms if n != coeur], n=2, cutoff=0.8)
@@ -93,15 +120,38 @@ def propositions(mot: str, raison_: str, noms: Counter, ignores: set[str]) -> tu
         if p not in props:
             props.append(p)
     if props and not sur:
-        p = props[0]
-        # Seulement des accents (« Etreint » → « Étreint »), ou une confusion typique d'un scan (« ouand » → « quand »).
-        sur = _sans_accents(p) == _sans_accents(coeur) or (len(coeur) >= 4 and _confusion_ocr(coeur, p))
+        sur = _accent_sur(coeur, props[0]) or (len(coeur) >= 4 and _confusion_ocr(coeur, props[0]))
     return [prefixe + p for p in props[:3]], sur
 
 
-# Lettres que la reconnaissance de texte confond souvent sur un scan.
-_CONFUSIONS = {frozenset(p) for p in ("oq", "ce", "li", "l1", "nu", "hb", "ft", "o0", "Il", "rn", "ao")}
-_CONFUSIONS_MULTI = (("rn", "m"), ("cl", "d"), ("ii", "ü"), ("li", "h"), ("vv", "w"), ("in", "m"))
+def _accent_sur(lu: str, propose: str) -> bool:
+    """Accent qui manque, et seulement là où l'absence ne peut pas être un autre vrai mot.
+
+    Le dictionnaire ne connaît pas toutes les conjugaisons : « fugué », « bandés », « ratatine » sont de vrais
+    mots qu'il « corrigerait » à tort. Sont sûrs : une majuscule sans accent (« Epaules » → « Épaules ») et un
+    accent ajouté au milieu du mot (« defaits » → « défaits »), jamais un accent retiré ni changé en fin de mot.
+    """
+    if len(lu) != len(propose) or _sans_accents(lu) != _sans_accents(propose):
+        return False
+    diff = [i for i, (a, b) in enumerate(zip(lu, propose)) if a != b]
+    if not diff or any(unicodedata.normalize("NFD", lu[i]) != lu[i] for i in diff):
+        return False  # le mot lu avait déjà un accent à cet endroit : on ne le retire ni ne le change
+    if diff == [0] and lu[0].isupper():
+        return True   # « Eternel », « Epaules »
+    return all(i < len(lu) - 3 for i in diff)
+
+
+# Petits mots qu'un scan colle au mot suivant (« lesyeux ») ou précédent (« veuxpas »). Pas de « sur », « se »,
+# « re » : ce sont aussi des débuts de vrais mots (« surdimensionné », « semi-… »).
+_PETITS_MOTS_AVANT = set("""le la les de des du un une et en au aux je tu il ils elle elles on nous vous ne que qui
+quand mais ses sa son ma mon mes ta ton tes leur leurs par pour dans avec sans plus très tout cette cet est était
+dont quoi""".split())
+_PETITS_MOTS_APRES = {"pas", "pour", "de", "et", "plus", "du", "des", "les", "je"}
+
+# Lettres que la reconnaissance de texte confond sur un scan, et qui ne forment presque jamais un autre vrai mot.
+# (« a/o », « r/n », « t/f » sont exclus : « mantra », « merdier », « taraude » sont de vrais mots.)
+_CONFUSIONS = {frozenset(p) for p in ("oq", "l1", "o0", "Il")}
+_CONFUSIONS_MULTI = (("ii", "ü"), ("vv", "w"))
 
 
 def _confusion_ocr(lu: str, propose: str) -> bool:
@@ -149,12 +199,32 @@ def analyser(livre: Livre, ignores: set[str], max_mots: int = 400, sans_ocr: boo
                             "apres": b.texte[m.start() + len(mot):z] + ("…" if z < len(b.texte) else ""),
                         })
                     trouves[mot]["nb"] = trouves[mot].get("nb", 0) + 1
+    # Un mot « inconnu » qui revient 3 fois ou plus est presque toujours un vrai mot (nom, mot rare, anglicisme) :
+    # une erreur de scan se répète rarement à l'identique. On ne le signale plus.
+    trouves = {m: i for m, i in trouves.items() if not (i["nb"] >= 3 and "inconnu" in i["raison"])}
+    # Les plus probables d'abord : correction proposée, puis le reste.
+    ordre = sorted(trouves.items(), key=lambda x: 0 if suggestions(sans_elision(x[0])) else 1)
     res = []
-    for mot, info in list(trouves.items())[:max_mots]:
+    for mot, info in ordre:
+        if len(res) >= max_mots:
+            break
         info["exemples"] = occurrences[mot]
         info["suggestions"], info["sur"] = propositions(mot, info["raison"], noms, ignores)
+        # Mot rare mais bien formé, sans correction possible (« toussotant », « caritative ») : le dictionnaire
+        # ne le connaît pas, mais ce n'est pas une erreur de scan. On ne le signale pas.
+        if (not info["suggestions"] and info["raison"] == "mot inconnu du dictionnaire"
+                and _bien_forme(sans_elision(mot))):
+            continue
         res.append(info)
     return res
+
+
+def _bien_forme(mot: str) -> bool:
+    """Ressemble à un vrai mot français : lettres seulement, des voyelles, pas d'amas de consonnes."""
+    m = mot.lower()
+    return (len(m) >= 5 and bool(re.fullmatch(r"[a-zàâäçéèêëîïôöùûüÿœæ\-]+", m))
+            and not re.search(r"[bcdfghjklmnpqrstvwxz]{4,}", m) and not re.search(r"(.)\1\1", m)
+            and not re.search(r"[wkx]{2}|q(?!u)", m))
 
 
 def remplacer_plusieurs(livre: Livre, paires: list[tuple[str, str]]) -> int:

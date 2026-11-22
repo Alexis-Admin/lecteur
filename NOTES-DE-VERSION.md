@@ -1,5 +1,32 @@
 # Notes de version — Lecteur
 
+## 1.1.0 — 21 novembre 2026
+
+Audit sur 15 livres différents (romans, essais, Bibles, commentaires, livres en anglais).
+
+**Sections et texte**
+- Vrais chapitres dans les romans : « Chapitre 2 · Rhys » (le numéro de chapitre n'est plus jeté), et plus d'en-têtes répétés (« ANA HUANG », « LE BUT 13 ») pris pour des chapitres.
+- Paragraphes recollés quand une page, un en-tête ou une colonne les coupait au milieu d'une phrase.
+- Encadrés sur le côté de la page (ex. Ze bible) lus à part, à la fin de la section, au lieu d'être mélangés ligne par ligne au texte.
+- Bible d'étude : plus de sections faites d'un titre seul (Psaumes), plus de citations en italique prises pour des titres, plus de renvois de marge (« 2Co ») au milieu des mots.
+- Mots coupés en fin de ligne sans trait d'union recollés (« maî trisait »), appels de note retirés (« décennie2 »), nombres collés séparés (« 3ans »).
+- Pages de garde et de copyright réunies au lieu de faire 10 petites sections.
+- Mise en page choisie toute seule d'après le contenu du PDF (Bible d'étude ou livre).
+
+**Livres en anglais**
+- Langue détectée à l'import : voix anglaise (Clara, Liam, Aria, Guy), pas de faux « mots à vérifier » français.
+
+**Écoute**
+- Un clic sur une section ouvre toujours sa lecture, même depuis l'aperçu.
+- La création de l'audio commence par la section ouverte : on peut l'écouter tout de suite.
+
+**Révision**
+- Un clic sur un mot l'encadre en jaune sur la page scannée et dans le texte.
+- Changements sûrs beaucoup plus prudents (plus de « fugué » → « fugue », « mantra » → « montra »), et nouveaux cas sûrs : mots collés (« lesyeux » → « les yeux »), majuscule sans accent (« Etes-vous » → « Êtes-vous »).
+- Noms propres regroupés avec un bouton « Tous ces noms sont bons ».
+- Beaucoup moins de faux mots à vérifier : un mot qui revient 3 fois ou plus, ou un mot rare bien formé, n'est plus signalé.
+- La révision est facultative : on peut créer l'audio quand on veut.
+
 ## 1.0.1 — 21 novembre 2026
 
 Premiers retours d'usage.

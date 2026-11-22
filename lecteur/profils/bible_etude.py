@@ -20,9 +20,14 @@ from ..modele import Bloc, Livre, Section
 from ..nettoyage import TRAIT_CONDITIONNEL, assembler, corriger_texte, nettoyer_mot
 from ..pdf_mots import Mot, colle, grouper_en_lignes, mots_de_page, taille_corps, texte_ligne
 from ..references import abreviation_de, analyser_etiquette, nom_affiche
+from .generique import fusionner_petites_sections
 
 NOM = "bible_etude"
 _RE_NOTE_TRAD = re.compile(r"^([a-h])\s*(\d{1,3})\.(\d{1,3})\s+(.*)$")
+# Abréviation de livre biblique seule (sans numéro de chapitre derrière) : renvoi de marge égaré.
+_RE_RENVOI_ISOLE = re.compile(
+    r"(?<![\w’'])[123]?(?:Gn|Ex|Lv|Nb|Dt|Jos|Jg|Rt|Ch|Esd|Né|Est|Jb|Ps|Pr|Ec|Ct|Es|Jr|Lm|Ez|Dn|Os|Jl|Am|Ab|Jon|Mi|Na|"
+    r"Ha|So|Ag|Za|Ml|Mt|Mc|Lc|Jn|Ac|Rm|Co|Ga|Ep|Ph|Col|Th|Tm|Tt|Phm|Hé|Jc|Jd|Ap)(?![\w’'\-.]|\s*\d)")
 _RE_ENTETE = re.compile(r"([A-ZÀ-Ü][A-ZÀ-Ü\- ]{2,})\s+(\d{1,3})\.(\d{1,3})")
 
 
@@ -155,7 +160,11 @@ def analyser_page(page: pymupdf.Page, numero: int) -> PageAnalysee:
         txt = texte_ligne(ligne)
         y0 = statistics.median(m.y0 for m in ligne)
         y1 = statistics.median(m.y1 for m in ligne)
-        if all(m.italique and not m.sans for m in ligne) and len(ligne) <= 14:
+        # Intertitre : ligne en italique, courte, qui commence par une majuscule et ne finit pas comme une phrase.
+        # Les citations en italique à l'intérieur d'un verset (« celui qui crie dans le désert… », « plus là. »)
+        # restent du texte.
+        if (all(m.italique and not m.sans for m in ligne) and len(ligne) <= 14
+                and re.match(r"[A-ZÀ-Ü0-9«]", txt) and not re.search(r"[.,;:’'»]\s*$", txt)):
             ev = Evenement(y0, "intertitre", txt)
         elif all(m.sans and m.gras for m in ligne):
             ev = Evenement(y0, "partie", txt)
@@ -410,6 +419,11 @@ class _Constructeur:
                 self.parties.append(self._texte([ev.texte]))
         elif ev.genre == "intertitre":
             self.fermer_verset()
+            s = self.section
+            if s is not None and s.blocs and all(b.genre == "titre" for b in s.blocs) and len(s.blocs) == 1:
+                # Titre sur deux lignes (« Baptême de » / « Jésus ») : on complète le même titre.
+                s.titre = s.blocs[0].texte = self._texte([s.titre + " " + ev.texte])
+                return
             s = self._nouvelle_section(self._texte([ev.texte]))
             s.blocs.append(Bloc(self._id(), "texte", "titre", s.titre, page=self.page))
         elif ev.genre == "chapitre":
@@ -463,7 +477,8 @@ def construire(doc: pymupdf.Document, pages: list[int], titre: str | None = None
             c.evenement(ev)
         for y, lignes in pa.encadres:
             ch, v = c.ancre_a(y)
-            t = c._texte([re.sub(r"^[-–]\s*", "– ", l) for l in lignes])
+            # Les renvois de la marge (« 2Co », « Ga ») se glissent parfois dans les lignes d'un encadré.
+            t = c._texte([_RE_RENVOI_ISOLE.sub(" ", re.sub(r"^[-–]\s*", "– ", l)) for l in lignes])
             if t:
                 extras.append(Bloc(c._id(), "notes", "encadre", t, ch, v, ref="Encadré", page=pa.numero))
         for y, ligne in pa.notes_trad:
@@ -505,6 +520,8 @@ def construire(doc: pymupdf.Document, pages: list[int], titre: str | None = None
         ligne = " ".join(x for x in (nettoyer_mot(w, j) for w in ligne.split(" ")) if x)
         c._note_journal(j)
         e = analyser_etiquette(ligne)
+        if not e:  # renvoi de marge égaré au milieu d'une note (« Dieu maî 2Co trisait »)
+            ligne = re.sub(r" {2,}", " ", _RE_RENVOI_ISOLE.sub(" ", ligne)).strip()
         if e and not plausible(e[1]):
             # « 7 6.6- » lu « 76.6 » : on retire le chiffre de trop si ça redevient plausible.
             corrige = analyser_etiquette(ligne[1:]) if len(str(e[1])) > 1 else None
@@ -527,6 +544,7 @@ def construire(doc: pymupdf.Document, pages: list[int], titre: str | None = None
         precedente = ligne
     fermer()
 
+    fusionner_petites_sections(livre)  # « La certitude du jugement divin » seul : réuni à son psaume
     _ranger_notes(livre, notes + extras)
     for s in livre.sections:
         s.ref = _ref_section(abr, s) if abr else ""

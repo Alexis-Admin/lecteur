@@ -45,6 +45,7 @@ class Livre:
     sections: list[Section] = field(default_factory=list)
     corrections: list[dict] = field(default_factory=list)  # journal des corrections automatiques
     format: int = FORMAT
+    langue: str = "fr"  # « fr » ou « en » (détectée à l'import) : choisit la voix et la vérification des mots
 
     # --- lecture ---------------------------------------------------------
     def a_des_notes(self) -> bool:
@@ -67,7 +68,8 @@ class Livre:
             Section(s["id"], s["titre"], s.get("ref", ""), [Bloc(**b) for b in s.get("blocs", [])])
             for s in d.get("sections", [])
         ]
-        champs = {k: v for k, v in d.items() if k != "sections"}
+        connus = set(Livre.__dataclass_fields__)
+        champs = {k: v for k, v in d.items() if k != "sections" and k in connus}
         return Livre(**champs, sections=sections)
 
     def enregistrer(self, chemin: Path) -> None:

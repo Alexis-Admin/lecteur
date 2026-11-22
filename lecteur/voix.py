@@ -28,6 +28,14 @@ VOIX_EDGE = [
     Voix("edge:fr-CA-JeanNeural", "Jean", "Québec · homme · grave"),
     Voix("edge:fr-CA-ThierryNeural", "Thierry", "Québec · homme"),
 ]
+# Livres en anglais (langue détectée à l'import) : une voix anglaise, sinon Sylvie lirait l'anglais avec l'accent.
+VOIX_EDGE_EN = [
+    Voix("edge:en-CA-ClaraNeural", "Clara (anglais)", "Canada anglais · femme"),
+    Voix("edge:en-CA-LiamNeural", "Liam (anglais)", "Canada anglais · homme"),
+    Voix("edge:en-US-AriaNeural", "Aria (anglais)", "États-Unis · femme"),
+    Voix("edge:en-US-GuyNeural", "Guy (anglais)", "États-Unis · homme"),
+]
+VOIX_PAR_DEFAUT_EN = VOIX_EDGE_EN[0].id
 VOIX_PIPER = [
     Voix("piper:fr_FR-siwis-medium", "Siwis (hors ligne)",
          "France · femme · sans Internet · 63 Mo à télécharger une fois · surlignage approximatif"),
@@ -37,7 +45,11 @@ VOIX_PAR_DEFAUT = VOIX_EDGE[0].id
 
 def liste_des_voix() -> list[Voix]:
     # Voix premium payée à l'usage (plus tard) : ajouter ici une liste VOIX_PREMIUM et un moteur dans moteur_pour().
-    return list(VOIX_EDGE) + list(VOIX_PIPER)
+    return list(VOIX_EDGE) + list(VOIX_PIPER) + list(VOIX_EDGE_EN)
+
+
+def langue_de_voix(voix_id: str) -> str:
+    return "en" if ":en-" in voix_id else "fr"
 
 
 class MoteurEdge:

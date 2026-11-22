@@ -91,6 +91,14 @@ function menuLivre(bouton) {
   setTimeout(() => document.addEventListener("click", function f(e) { if (!bouton.contains(e.target)) { annuler(); } document.removeEventListener("click", f); }), 0);
 }
 
+// Nom de la voix du livre ouvert (voix anglaise pour un livre en anglais).
+function majNomVoix() {
+  api.voix(etat.livre ? etat.livre.id : "").then((v) => {
+    const x = v.voix.find((y) => y.id === v.choisie);
+    if (x) $("#voix-nom").textContent = x.nom;
+  });
+}
+
 async function ouvrirLivre(id, vue = "lecture") {
   try {
     etat.livre = await api.livre(id);
@@ -99,6 +107,7 @@ async function ouvrirLivre(id, vue = "lecture") {
     return;
   }
   sauverReglages({ dernier_livre: id });
+  majNomVoix();
   $("#audio").pause();
   etat.audio.chargee = null;
   etat.audio.e = null;
@@ -150,10 +159,10 @@ function choisirSection(id) {
   memo[etat.livre.id] = id;
   sauverReglages({ sections: memo });
   dessinerSections();
-  if (!$("#vue-apercu").hidden) {
-    const b = etat.section.blocs.find((x) => x.page);
-    if (b) allerPage(b.page);
-  } else afficherLecture();
+  // Un clic sur une section ouvre toujours sa lecture (texte + audio), même depuis l'aperçu :
+  // avant, dans l'aperçu, il changeait seulement la page scannée et on croyait que rien ne marchait.
+  afficherLecture();
+  majAudio();
 }
 
 // ---------- vues ----------
@@ -344,14 +353,36 @@ const RAISONS = {
   "majuscule au milieu du mot": "majuscule au milieu du mot",
 };
 
-function lieu(ex) {
-  return `data-page="${ex.page || ""}" data-section="${ex.section || ""}" data-piste="${ex.piste || ""}"`;
+function lieu(ex, mot) {
+  return `data-page="${ex.page || ""}" data-section="${ex.section || ""}" data-piste="${ex.piste || ""}" data-bloc="${ex.bloc || ""}" data-mot="${echap(mot || "")}"`;
 }
 
-function allerA(el) {
-  if (el.dataset.piste && aDesNotes(etat.livre)) choisirPiste(el.dataset.piste, false);
-  if (sansPages()) allerPage(etat.livre.sections.findIndex((s) => s.id === el.dataset.section) + 1 || 1);
-  else if (el.dataset.page) allerPage(Number(el.dataset.page));
+// Clic sur un mot de la révision : on va à sa page et on l'encadre en jaune, sur le scan ET dans le texte.
+async function allerA(el) {
+  const { page, section, piste, bloc, mot } = el.dataset;
+  if (piste && aDesNotes(etat.livre)) choisirPiste(piste, false);
+  const n = sansPages() ? etat.livre.sections.findIndex((s) => s.id === section) + 1 || 1 : Number(page);
+  if (n) await allerPage(n);
+  if (!mot) return;
+  // Dans le texte nettoyé
+  $$("#ap-texte .cible").forEach((x) => x.classList.remove("cible"));
+  const b = bloc && $(`#ap-texte .bloc[data-id="${bloc}"]`);
+  const marque = b && [...b.querySelectorAll("mark.douteux")].find((x) => x.textContent === mot);
+  const cible = marque || b;
+  if (cible) { cible.classList.add("cible"); cible.scrollIntoView({ block: "center", behavior: "smooth" }); }
+  // Sur la page scannée
+  if (sansPages() || !page) return;
+  const r = await api.position_mot(etat.livre.id, Number(page), mot);
+  const conteneur = $("#scan > div");
+  if (!r.rects.length || !conteneur || etat.ap.page !== Number(page)) return;
+  conteneur.querySelectorAll(".mot-cible").forEach((x) => x.remove());
+  r.rects.forEach(([x0, y0, x1, y1], i) => {
+    const d = document.createElement("div");
+    d.className = "mot-cible";
+    d.style.cssText = `left:${(x0 / r.largeur) * 100}%;top:${(y0 / r.hauteur) * 100}%;width:${((x1 - x0) / r.largeur) * 100}%;height:${((y1 - y0) / r.hauteur) * 100}%`;
+    conteneur.appendChild(d);
+    if (i === 0) d.scrollIntoView({ block: "center", behavior: "smooth" });
+  });
 }
 
 function dessinerDouteux() {
@@ -371,7 +402,9 @@ function dessinerDouteux() {
     return;
   }
   const surs = liste.map((d, i) => ({ d, i })).filter((x) => x.d.sur && x.d.suggestions.length);
-  const autres = liste.map((d, i) => ({ d, i })).filter((x) => !(x.d.sur && x.d.suggestions.length));
+  const estNom = (d) => d.raison === "inconnu (début de phrase)" || (/^[A-ZÀ-Ü]/.test(d.mot) && d.raison !== "chiffres et lettres mélangés" && !d.sur);
+  const noms = liste.map((d, i) => ({ d, i })).filter((x) => !x.d.sur && estNom(x.d));
+  const autres = liste.map((d, i) => ({ d, i })).filter((x) => !(x.d.sur && x.d.suggestions.length) && !estNom(x.d));
   const coches = surs.filter((x) => !etat.ap.decoches.has(x.d.mot)).length;
   let html = "";
   if (surs.length) {
@@ -385,11 +418,22 @@ function dessinerDouteux() {
           <input type="checkbox" data-sur="${echap(d.mot)}" ${etat.ap.decoches.has(d.mot) ? "" : "checked"}>
           <span class="ch-corps">
             <span class="ch-l"><span class="av">${echap(d.mot)}</span><span class="fl">›</span><span class="ap">${echap(d.suggestions[0])}</span>
-              <span class="ou" ${lieu(ex)} title="Voir dans la page">${ex.page ? "p. " + ex.page : "voir"}${d.nb > 1 ? " · " + d.nb + " fois" : ""}</span></span>
-            <span class="ch-ctx">${ex.avant.length > 34 ? "…" : ""}${echap(ex.avant.slice(-34))}<b>${echap(d.mot)}</b>${echap(ex.apres.slice(0, 34))}${ex.apres.length > 34 ? "…" : ""}</span>
+              <span class="ou" ${lieu(ex, d.mot)} title="Voir le mot sur la page">${ex.page ? "p. " + ex.page : "voir"}${d.nb > 1 ? " · " + d.nb + " fois" : ""}</span></span>
+            <span class="ch-ctx" ${lieu(ex, d.mot)} title="Voir le mot sur la page">${ex.avant.length > 34 ? "…" : ""}${echap(ex.avant.slice(-34))}<b>${echap(d.mot)}</b>${echap(ex.apres.slice(0, 34))}${ex.apres.length > 34 ? "…" : ""}</span>
           </span></label>`;
       }).join("")}
       <button class="prim" id="rev-appliquer" ${coches ? "" : "disabled"}>Appliquer ${coches > 1 ? "les " + coches + " changements" : coches ? "ce changement" : ""}</button>
+    </section>`;
+  }
+  if (noms.length) {
+    html += `<section class="rev-groupe">
+      <div class="rev-tete"><span class="lab-c">Noms propres · ${noms.length}</span></div>
+      <p class="aide">Des noms que le dictionnaire ne connaît pas (personnes, lieux, titres). Clique sur un nom pour le voir sur la page ; s'il est mal lu, corrige-le dans le texte au milieu.</p>
+      <div class="noms-l">${noms.slice(0, 150).map(({ d }) => {
+        const ex = d.exemples[0] || {};
+        return `<button class="nom-p" ${lieu(ex, d.mot)} title="Voir « ${echap(d.mot)} » sur la page">${echap(d.mot)}</button>`;
+      }).join("")}</div>
+      <button class="pil ok" id="rev-noms">Tous ces noms sont bons (${noms.length})</button>
     </section>`;
   }
   if (autres.length) {
@@ -400,7 +444,7 @@ function dessinerDouteux() {
         const ex = d.exemples[0] || {};
         const sug = (d.suggestions.length ? '<span class="rev-choix">Remplacer par</span>' : "") + d.suggestions.map((s) => `<button class="pil" data-i="${i}" data-rempl="${echap(s)}" title="Remplacer « ${echap(d.mot)} » par « ${echap(s)} » partout">${echap(s)}</button>`).join("");
         return `<div class="item" data-i="${i}">
-          <span class="ctx" ${lieu(ex)} title="Voir dans la page">${echap(ex.avant)}<b>${echap(d.mot)}</b>${echap(ex.apres)}</span>
+          <span class="ctx" ${lieu(ex, d.mot)} title="Voir le mot sur la page">${echap(ex.avant)}<b>${echap(d.mot)}</b>${echap(ex.apres)}</span>
           <span class="meta">${ex.page ? "p. " + ex.page + " · " : ""}${d.nb > 1 ? d.nb + " fois · " : ""}${echap(RAISONS[d.raison] || d.raison)}</span>
           ${sug ? `<div class="acts">${sug}</div>` : ""}
           <div class="acts"><button class="pil" data-garder="${i}" title="Le mot est correct : le garder tel quel et ne plus le signaler">C'est bon</button><button class="pil" data-corriger="${i}" title="Taper la bonne forme moi-même">Écrire…</button></div>
@@ -409,9 +453,20 @@ function dessinerDouteux() {
       ${autres.length > 80 ? `<p class="petit">… et ${autres.length - 80} autres. Règle ceux-ci d'abord.</p>` : ""}
     </section>`;
   }
+  html += `<p class="aide rev-facultatif">La révision est facultative : tu peux créer l'audio quand tu veux. Une correction faite plus tard ne refait que le passage touché.</p>`;
   zone.innerHTML = html;
 
-  $$("#liste-douteux .ctx, #liste-douteux .ou").forEach((el) => (el.onclick = (e) => { e.preventDefault(); allerA(el); }));
+  const bNoms = $("#rev-noms");
+  if (bNoms) bNoms.onclick = async () => {
+    bNoms.disabled = true;
+    for (const { d } of noms) await api.ignorer(d.mot);
+    const faits = new Set(noms.map((x) => x.d.mot));
+    etat.ap.douteux = etat.ap.douteux.filter((d) => !faits.has(d.mot));
+    dessinerDouteux(); dessinerTexte();
+    toast(`${faits.size} noms gardés tels quels.`);
+  };
+  $$("#liste-douteux .nom-p").forEach((el) => (el.onclick = () => allerA(el)));
+  $$("#liste-douteux .ctx, #liste-douteux .ou, #liste-douteux .ch-ctx").forEach((el) => (el.onclick = (e) => { e.preventDefault(); e.stopPropagation(); allerA(el); }));
   $$("#liste-douteux [data-sur]").forEach((el) => (el.onchange = () => {
     if (el.checked) etat.ap.decoches.delete(el.dataset.sur); else etat.ap.decoches.add(el.dataset.sur);
     dessinerDouteux();
@@ -508,7 +563,7 @@ function choisirPiste(piste, redessiner = true) {
 const PROFILS_AIDE = {
   bible_etude: { aide: "Texte en haut, notes en 2 colonnes en bas", mini: '<i style="left:12%;top:10%;width:76%;height:44%;background:#0A84FF33;border:1px solid #0A84FF"></i><i style="left:8%;top:62%;width:40%;height:30%;background:#C9A46A44;border:1px solid #B08D57"></i><i style="left:52%;top:62%;width:40%;height:30%;background:#C9A46A44;border:1px solid #B08D57"></i>' },
   deux_colonnes: { aide: "Colonne de gauche, puis de droite", mini: '<i style="left:8%;top:12%;width:40%;height:78%;background:#0A84FF33;border:1px solid #0A84FF"></i><i style="left:52%;top:12%;width:40%;height:78%;background:#0A84FF33;border:1px solid #0A84FF"></i>' },
-  simple: { aide: "Une colonne, page après page", mini: '<i style="left:14%;top:12%;width:72%;height:78%;background:#0A84FF33;border:1px solid #0A84FF"></i>' },
+  simple: { aide: "Roman, essai… Colonnes et encadrés détectés tout seuls", mini: '<i style="left:14%;top:12%;width:72%;height:78%;background:#0A84FF33;border:1px solid #0A84FF"></i>' },
 };
 
 function ouvrirImport(type = etat.reglages.type_import || "pdf", contenu = null) {
@@ -618,9 +673,8 @@ async function choisirFichier() {
   $("#imp-nom").textContent = f.nom;
   $("#imp-details").textContent = `${f.pages} pages${f.a_du_texte ? "" : " · ⚠ aucun texte trouvé : ce PDF n'a pas été passé à l'OCR"}`;
   if (!$("#imp-titre-livre").value) $("#imp-titre-livre").value = f.titre;
-  const nom = f.nom.toLowerCase();
-  if (/bible|gen[eè]se|exode|psaume|segond/.test(nom)) etat.imp.profil = "bible_etude";
-  else if (/commentaire/.test(nom)) etat.imp.profil = "deux_colonnes";
+  // Mise en page choisie d'après le contenu des pages (on peut toujours en choisir une autre).
+  etat.imp.profil = f.profil_conseille || "simple";
   dessinerProfils();
   majImport();
 }
@@ -741,7 +795,7 @@ function dessinerBarreAudio() {
   b.innerHTML = `<span class="lecteur-msg">${msg}${err}</span>
     <button class="prim" id="b-gen" ${e.autre_en_cours || fini ? "disabled" : ""}>${e.fait ? "Continuer la création" : "Créer l'audio"}</button>`;
   const bg = $("#b-gen");
-  if (bg) bg.onclick = async () => { await api.generer_audio(etat.livre.id); etat.audio.debut = null; majAudio(); };
+  if (bg) bg.onclick = async () => { await api.generer_audio(etat.livre.id, etat.section ? etat.section.id : ""); etat.audio.debut = null; majAudio(); };
 }
 
 function dessinerLecteur() {
@@ -839,9 +893,9 @@ function brancherAudio() {
 async function basculerPopVoix() {
   const pop = $("#pop-voix");
   if (!pop.hidden) { pop.hidden = true; return; }
-  const v = await api.voix();
+  const v = await api.voix(etat.livre ? etat.livre.id : "");
   etat.audio.voix = v;
-  pop.innerHTML = `<span class="lab-c">Voix de lecture</span>` + v.voix.map((x) => `
+  pop.innerHTML = `<span class="lab-c">${v.langue === "en" ? "Voix anglaise (livre en anglais)" : "Voix de lecture"}</span>` + v.voix.map((x) => `
     <div class="v-ligne ${x.id === v.choisie ? "on" : ""}">
       <button class="pb" data-ecouter="${x.id}" aria-label="Écouter ${echap(x.nom)}" title="Écouter un extrait">${ICONES.play}</button>
       <div class="v-txt" data-choisir="${x.id}"><b>${echap(x.nom)}</b><span>${echap(x.description)}</span></div></div>`).join("")
@@ -1115,7 +1169,7 @@ function dessinerExport() {
   $("#exp-dossier").onclick = async () => { const c = await api.choisir_dossier(); if (c) { etat.exp.dest = { lettre: null, chemin: c }; dessinerExport(); } };
   $$("#exp-modes button").forEach((b) => (b.onclick = () => { etat.exp.mode = b.dataset.m; chargerPlanExport(); }));
   $$("#exp-vit button").forEach((b) => (b.onclick = () => { etat.exp.vitesse = Number(b.dataset.v); chargerPlanExport(); }));
-  if ($("#exp-gen")) $("#exp-gen").onclick = async () => { await api.generer_audio(etat.livre.id); fermerExport(); majAudio(); toast("Création de l'audio lancée."); };
+  if ($("#exp-gen")) $("#exp-gen").onclick = async () => { await api.generer_audio(etat.livre.id, etat.section ? etat.section.id : ""); fermerExport(); majAudio(); toast("Création de l'audio lancée."); };
   $("#exp-annuler").onclick = fermerExport;
   $("#exp-go").onclick = lancerExport;
 }
@@ -1241,7 +1295,7 @@ function brancher() {
     afficherLecture();
     await majAudio();
     if (etat.audio.e && etat.audio.e.fait < etat.audio.e.total && !etat.audio.e.en_cours) {
-      await api.generer_audio(etat.livre.id); etat.audio.debut = null; majAudio();
+      await api.generer_audio(etat.livre.id, etat.section ? etat.section.id : ""); etat.audio.debut = null; majAudio();
       toast("Création de l'audio lancée.");
     }
   };
@@ -1313,7 +1367,7 @@ async function demarrer() {
   appliquerTheme(etat.reglages.theme || "jour");
   etat.mode = etat.reglages.mode || "mixte";
   brancher();
-  api.voix().then((v) => { const x = v.voix.find((y) => y.id === v.choisie); if (x) $("#voix-nom").textContent = x.nom; });
+  majNomVoix();
   await chargerLivres();
   const dernier = etat.reglages.dernier_livre;
   if (dernier && etat.livres.some((l) => l.id === dernier)) await ouvrirLivre(dernier);

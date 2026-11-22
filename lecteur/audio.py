@@ -30,6 +30,9 @@ class AudioBloc:
 
 
 def texte_prononce(livre: Livre, bloc: Bloc) -> str:
+    if getattr(livre, "langue", "fr") == "en":
+        # Livre anglais : la voix anglaise lit le texte tel quel (les règles françaises changeraient « cf. » en « voir »).
+        return bloc.texte.strip()
     return bloc_a_lire(bloc, livre.refs_nues).strip()
 
 
@@ -103,13 +106,17 @@ def etat_audio(dossier_livre: Path, livre: Livre, voix: str) -> dict:
 
 
 async def generer_livre(dossier_livre: Path, livre: Livre, voix: str, moteur, *, en_parallele: int = 3,
-                        progres=None, arret=None, sections: list[str] | None = None) -> dict:
+                        progres=None, arret=None, sections: list[str] | None = None,
+                        premiere: str | None = None) -> dict:
     """Crée l'audio de tous les blocs qui n'en ont pas. Reprend où ça s'était arrêté.
 
     progres(fait, total, section_id) est appelé après chaque bloc ; arret() -> True interrompt proprement.
     """
     a_faire: list[tuple[str, Bloc]] = []
-    for s in livre.sections:
+    ordre = list(livre.sections)
+    i = next((k for k, s in enumerate(ordre) if s.id == premiere), 0)
+    ordre = ordre[i:] + ordre[:i]  # la section ouverte d'abord, puis la suite, puis le début
+    for s in ordre:
         if sections and s.id not in sections:
             continue
         for b in s.blocs:

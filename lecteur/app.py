@@ -5,6 +5,7 @@ import asyncio
 import base64
 import json
 import os
+import re
 import shutil
 import threading
 import time
@@ -15,14 +16,15 @@ import webview
 
 from . import __version__, bibliotheque, douteux, export_usb, serveur_audio
 from .assemblage import assembler, duree_section, sections_perimees
-from .audio import etat_audio, generer_livre, menage
+from .audio import etat_audio, generer_livre, menage, texte_prononce
 from .importer import PROFILS, importer_pdf, lire_pages
 from .modele import Livre
+from .pdf_mots import mots_de_page
 from .ocr_image import langues_disponibles
 from .profils import bible_etude, deux_colonnes, simple
 from .prononciation import a_lire, bloc_a_lire, etiquette_a_lire
 from .texte_brut import lire_page_web, livre_depuis_images, livre_depuis_texte
-from .voix import VOIX_PAR_DEFAUT, liste_des_voix, moteur_pour
+from .voix import VOIX_PAR_DEFAUT, VOIX_PAR_DEFAUT_EN, langue_de_voix, liste_des_voix, moteur_pour
 
 UI = Path(__file__).resolve().parent.parent / "ui" / "index.html"
 
@@ -83,7 +85,22 @@ class Api:
         with pymupdf.open(chemin) as doc:
             texte = "".join(doc[i].get_text()[:400] for i in range(min(3, len(doc))))
             return {"chemin": chemin, "nom": Path(chemin).name, "pages": len(doc), "a_du_texte": bool(texte.strip()),
-                    "titre": Path(chemin).stem.lstrip("0123456789. ")}
+                    "titre": Path(chemin).stem.lstrip("0123456789. "), "profil_conseille": self._profil_conseille(doc)}
+
+    @staticmethod
+    def _profil_conseille(doc) -> str:
+        """Bible d'étude si des pages du milieu ont l'en-tête « GENÈSE 4.12 » ; sinon « Livre » (les colonnes et
+        les encadrés y sont détectés tout seuls). Le nom du fichier ne suffit pas (« All the Genealogies of the bible »)."""
+        n = len(doc)
+        echantillon = sorted({max(0, min(n - 1, int(n * f))) for f in (0.3, 0.45, 0.6, 0.75)})
+        bible = 0
+        for i in echantillon:
+            try:
+                if bible_etude.analyser_page(doc[i], i + 1).entete_livre:
+                    bible += 1
+            except Exception:  # noqa: BLE001 - page illisible : on l'ignore
+                pass
+        return bible_etude.NOM if bible >= 2 else simple.NOM
 
     def importer(self, chemin: str, profil: str, pages: str, titre: str) -> dict:
         corr = bibliotheque.corrections()
@@ -178,7 +195,8 @@ class Api:
 
     def douteux(self, livre_id: str) -> list[dict]:
         ign = set(bibliotheque.corrections().get("ignores", []))
-        sans_ocr = bibliotheque.meta(livre_id).get("type") == "web"
+        # Page web ou livre anglais : pas de vérification par le dictionnaire français, seulement les vrais accidents.
+        sans_ocr = bibliotheque.meta(livre_id).get("type") == "web" or self._langue(livre_id) == "en"
         return douteux.analyser(self._livre(livre_id), ign, sans_ocr=sans_ocr)
 
     def page(self, livre_id: str, numero: int, largeur: int = 900) -> dict:
@@ -212,6 +230,38 @@ class Api:
             else:
                 zones = simple.zones_page(page, numero)
             return {"image": image, "largeur": page.rect.width, "hauteur": page.rect.height, "zones": zones}
+
+    def position_mot(self, livre_id: str, numero: int, mot: str) -> dict:
+        """Où se trouve un mot sur la page scannée (pour l'encadrer en jaune dans l'aperçu)."""
+        m = bibliotheque.meta(livre_id)
+        chemin = m.get("chemin_source", "")
+        if m.get("type") in ("images", "texte", "web") or not chemin or not Path(chemin).exists() or not mot:
+            return {"rects": []}
+        with pymupdf.open(chemin) as doc:
+            if not 1 <= numero <= len(doc):
+                return {"rects": []}
+            page = doc[numero - 1]
+            # Les mots tels que l'app les lit sur la page : un mot du texte peut venir de 1 à 3 morceaux du scan
+            # (« de » + « facto » → « defacto »), et le scan peut contenir des signes en plus (« *11 »).
+            def norme(t: str) -> str:
+                return re.sub(r"[^\wÀ-ÿ]", "", t).lower()
+
+            cible = norme(mot)
+            mots = [m for m in mots_de_page(page, numero) if m.texte.strip()]
+            rects = []
+            if cible:
+                for i in range(len(mots)):
+                    concat = ""
+                    for k in range(i, min(i + 3, len(mots))):
+                        concat += norme(mots[k].texte)
+                        if concat == cible or (k == i and cible in concat and len(cible) >= 4):
+                            groupe = mots[i:k + 1]
+                            rects.append([min(m.x0 for m in groupe), min(m.y0 for m in groupe),
+                                          max(m.x1 for m in groupe), max(m.y1 for m in groupe)])
+                            break
+                        if not cible.startswith(concat):
+                            break
+            return {"largeur": page.rect.width, "hauteur": page.rect.height, "rects": rects[:6]}
 
     def modifier_bloc(self, livre_id: str, bloc_id: str, texte: str) -> bool:
         livre = self._livre(livre_id)
@@ -266,7 +316,7 @@ class Api:
     def blocs_lus(self, livre_id: str, bloc_ids: list[str]) -> list[str]:
         """Texte tel qu'il sera prononcé, pour chaque bloc demandé."""
         livre = self._livre(livre_id)
-        return [bloc_a_lire(b, livre.refs_nues) if (b := livre.bloc(i)) else "" for i in bloc_ids]
+        return [texte_prononce(livre, b) if (b := livre.bloc(i)) else "" for i in bloc_ids]
 
     def renommer(self, livre_id: str, titre: str) -> bool:
         livre = self._livre(livre_id)
@@ -286,19 +336,32 @@ class Api:
         return True
 
     # --- audio (phase 2) ------------------------------------------------------
-    def _voix(self) -> str:
-        return bibliotheque.reglages().get("voix") or VOIX_PAR_DEFAUT
+    def _voix(self, livre_id: str | None = None) -> str:
+        """Voix du livre : la voix anglaise choisie pour un livre en anglais, sinon la voix française."""
+        r = bibliotheque.reglages()
+        if livre_id and self._langue(livre_id) == "en":
+            return r.get("voix_en") or VOIX_PAR_DEFAUT_EN
+        return r.get("voix") or VOIX_PAR_DEFAUT
+
+    def _langue(self, livre_id: str) -> str:
+        try:
+            return getattr(self._livre(livre_id), "langue", "fr") or "fr"
+        except Exception:  # noqa: BLE001
+            return "fr"
 
     def _dossier(self, livre_id: str) -> Path:
         return bibliotheque.chemin_livre(livre_id).parent
 
-    def voix(self) -> dict:
-        return {"choisie": self._voix(), "voix": [v.__dict__ for v in liste_des_voix()]}
+    def voix(self, livre_id: str = "") -> dict:
+        """Voix proposées pour ce livre (selon sa langue) et celle qui est choisie."""
+        langue = self._langue(livre_id) if livre_id else "fr"
+        liste = [v for v in liste_des_voix() if langue_de_voix(v.id) == langue]
+        return {"choisie": self._voix(livre_id or None), "langue": langue, "voix": [v.__dict__ for v in liste]}
 
     def choisir_voix(self, voix_id: str) -> bool:
         if voix_id not in {v.id for v in liste_des_voix()}:
             return False
-        self.enregistrer_reglages({"voix": voix_id})
+        self.enregistrer_reglages({"voix_en" if langue_de_voix(voix_id) == "en" else "voix": voix_id})
         return True
 
     def extrait_voix(self, voix_id: str) -> str:
@@ -306,7 +369,9 @@ class Api:
         f = bibliotheque.racine() / "extraits" / (voix_id.replace(":", "-") + ".mp3")
         if not f.exists():
             nom = next((v.nom for v in liste_des_voix() if v.id == voix_id), "")
-            texte = (f"Bonjour, je suis {nom}. Voici comment je lirai tes livres : "
+            texte = (f"Hello, I am {nom.split(' (')[0]}. This is how I will read your English books: "
+                     "In the beginning, God created the heavens and the earth.") if langue_de_voix(voix_id) == "en" else (
+                     f"Bonjour, je suis {nom}. Voici comment je lirai tes livres : "
                      "Genèse, chapitre 1, verset 1. Au commencement, Dieu créa le ciel et la terre.")
             mp3, _ = asyncio.run(moteur_pour(voix_id).synthetiser(texte, voix_id))
             f.parent.mkdir(parents=True, exist_ok=True)
@@ -314,26 +379,29 @@ class Api:
         return "data:audio/mpeg;base64," + base64.b64encode(f.read_bytes()).decode()
 
     def etat_audio(self, livre_id: str) -> dict:
-        e = etat_audio(self._dossier(livre_id), self._livre(livre_id), self._voix())
+        e = etat_audio(self._dossier(livre_id), self._livre(livre_id), self._voix(livre_id))
         g = self._generation
         e["en_cours"] = bool(g and g["livre"] == livre_id and g["en_cours"])
         e["autre_en_cours"] = bool(g and g["livre"] != livre_id and g["en_cours"])
         e["erreurs"] = g["erreurs"] if g and g["livre"] == livre_id else []
-        e["voix"] = self._voix()
+        e["voix"] = self._voix(livre_id)
         return e
 
-    def generer_audio(self, livre_id: str) -> dict:
-        """Lance la création de l'audio en arrière-plan (un livre à la fois). L'interface suit avec etat_audio."""
+    def generer_audio(self, livre_id: str, depuis_section: str = "") -> dict:
+        """Lance la création de l'audio en arrière-plan (un livre à la fois). L'interface suit avec etat_audio.
+
+        La section ouverte passe en premier : on peut l'écouter au bout d'une minute au lieu d'attendre tout le livre.
+        """
         if self._generation and self._generation["en_cours"]:
             return {"deja": self._generation["livre"]}
-        livre, voix, dossier = self._livre(livre_id), self._voix(), self._dossier(livre_id)
+        livre, voix, dossier = self._livre(livre_id), self._voix(livre_id), self._dossier(livre_id)
         g = {"livre": livre_id, "en_cours": True, "arret": False, "erreurs": []}
         self._generation = g
 
         def travail():
             try:
                 r = asyncio.run(generer_livre(dossier, livre, voix, moteur_pour(voix), en_parallele=3,
-                                              arret=lambda: g["arret"]))
+                                              arret=lambda: g["arret"], premiere=depuis_section or None))
                 g["erreurs"] = r["erreurs"]
             except Exception as e:  # noqa: BLE001
                 g["erreurs"] = [str(e)]
@@ -354,7 +422,7 @@ class Api:
         s = next((x for x in livre.sections if x.id == section_id), None)
         if s is None:
             return {"erreur": "Section introuvable."}
-        r = assembler(self._dossier(livre_id), livre, s, mode, self._voix())
+        r = assembler(self._dossier(livre_id), livre, s, mode, self._voix(livre_id))
         if r is None:
             return {"pas_pret": True}
         return {"url": serveur_audio.adresse(r["mp3"]), "duree": r["duree"],
@@ -367,7 +435,7 @@ class Api:
                 livre = self._livre(livre_id)
                 s = next((x for x in livre.sections if x.id == section_id), None)
                 if s is not None:
-                    assembler(self._dossier(livre_id), livre, s, mode, self._voix())
+                    assembler(self._dossier(livre_id), livre, s, mode, self._voix(livre_id))
             except Exception:  # noqa: BLE001 - sera refait (avec le message d'erreur) au moment de l'écouter
                 pass
         threading.Thread(target=travail, daemon=True).start()
@@ -376,12 +444,13 @@ class Api:
     # --- réglages (phase 4) --------------------------------------------------
     def _fichiers_perimes(self) -> list[Path]:
         """Audio qui ne sert plus, dans tous les livres : blocs et sections refaits, restes d'export."""
-        voix, res = self._voix(), []
+        res = []
         for info in bibliotheque.liste():
             try:
                 livre, dossier = self._livre(info["id"]), self._dossier(info["id"])
             except Exception:  # noqa: BLE001 - livre illisible : on n'y touche pas
                 continue
+            voix = self._voix(info["id"])
             res += menage(dossier, livre, voix) + sections_perimees(dossier, livre, voix)
             export = dossier / "audio" / "export"
             if export.exists():
@@ -421,7 +490,7 @@ class Api:
     def durees_sections(self, livre_id: str, mode: str) -> list[float | None]:
         """Durée de chaque section (None si son audio n'est pas encore créé) : progression et temps restant."""
         livre = self._livre(livre_id)
-        return [duree_section(self._dossier(livre_id), livre, s, mode, self._voix()) for s in livre.sections]
+        return [duree_section(self._dossier(livre_id), livre, s, mode, self._voix(livre_id)) for s in livre.sections]
 
     # --- export clé USB (phase 2.4) -------------------------------------------
     def cles_usb(self) -> list[dict]:
@@ -432,7 +501,7 @@ class Api:
         return (r[0] if isinstance(r, (list, tuple)) else r) if r else None
 
     def plan_export(self, livre_id: str, mode: str, vitesse: float) -> dict:
-        livre, voix, dossier = self._livre(livre_id), self._voix(), self._dossier(livre_id)
+        livre, voix, dossier = self._livre(livre_id), self._voix(livre_id), self._dossier(livre_id)
         durees = [duree_section(dossier, livre, s, mode, voix) for s in livre.sections]
         fichiers = export_usb.plan(livre, durees, vitesse)
         prets = [f for f in fichiers if f["duree"]]
@@ -444,7 +513,7 @@ class Api:
     def exporter_usb(self, livre_id: str, destination: str, mode: str, vitesse: float) -> dict:
         if self._export and self._export["en_cours"]:
             return {"deja": True}
-        livre, voix, dossier = self._livre(livre_id), self._voix(), self._dossier(livre_id)
+        livre, voix, dossier = self._livre(livre_id), self._voix(livre_id), self._dossier(livre_id)
         nom_voix = next((v.nom for v in liste_des_voix() if v.id == voix), "")
         x = {"en_cours": True, "arret": False, "fait": 0, "total": 0, "fichier": "", "resultat": None, "erreur": None}
         self._export = x
